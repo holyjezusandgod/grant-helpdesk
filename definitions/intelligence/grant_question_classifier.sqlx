@@ -12,10 +12,12 @@ SELECT
 
   AI.GENERATE_BOOL(
     (
-      'You are a classifier for a grant support community helpdesk. '
-      'Return TRUE if this member content is a genuine question or request for help about grants, '
-      'funding, eligibility, applications, or any grant-related topic that a support agent should respond to. '
-      'Return FALSE for social comments, thank-yous, reactions, announcements, or general discussion. '
+      'You are a classifier for a grant and financial support community helpdesk. '
+      'Return TRUE if this member content expresses ANY of the following — even if vague, emotional, or not phrased as a direct question: '
+      'a need for financial help, housing, rent, utilities, food, medical care, car repair, business funding, job support, debt relief, disability assistance, or any other resource or grant. '
+      'Also return TRUE if the person is describing a difficult situation (hardship, struggle, crisis) that implies they need help, even if they do not explicitly ask for it. '
+      'Return FALSE ONLY for: pure social reactions (hi, thank you, congrats, emojis), event check-ins, announcements, or content with no connection to a personal need or request. '
+      'When in doubt, return TRUE. '
       'Content type: ', content_type, '. Text: ', SUBSTR(body, 1, 1500)
     ),
     endpoint     => 'gemini-2.5-flash',
