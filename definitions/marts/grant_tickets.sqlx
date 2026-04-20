@@ -1,7 +1,7 @@
 config {
   type: "view",
   name: "grant_tickets",
-  description: "Main view for the grant helpdesk dashboard. Joins member content with member profile and ticket metadata. Default status is 'open' when no metadata row exists."
+  description: "Main view for the grant helpdesk dashboard. Status priority: (1) manual override from ticket_metadata, (2) team_commented → answered, (3) team_reacted → in_progress, (4) open."
 }
 
 SELECT
@@ -17,26 +17,44 @@ SELECT
 
   -- member fields
   m.member_id,
-  m.full_name                           AS member_name,
+  m.full_name          AS member_name,
   m.first_name,
   m.last_name,
   m.email_address,
-  m.state                               AS member_state,
-  m.city                                AS member_city,
+  m.state              AS member_state,
+  m.city               AS member_city,
   m.avatar_url,
   m.join_date,
   m.last_visited_network,
   m.member_permalink,
 
-  -- ticket status (defaults to open until team acts)
-  COALESCE(t.status, 'open')            AS ticket_status,
+  -- team engagement signals (failsafe)
+  COALESCE(te.team_commented, FALSE)   AS team_commented,
+  COALESCE(te.team_reacted,   FALSE)   AS team_reacted,
+  te.first_engagement_at,
+
+  -- final ticket status:
+  -- (1) manual override from Streamlit wins
+  -- (2) team commented or reacted → answered
+  -- (3) nothing → open
+  -- in_progress is manual-only
+  CASE
+    WHEN t.status IS NOT NULL                                   THEN t.status
+    WHEN te.team_commented = TRUE OR te.team_reacted = TRUE     THEN 'answered'
+    ELSE                                                             'open'
+  END                                  AS ticket_status,
+
+  t.status                             AS manual_status,
   t.assigned_to,
-  t.updated_at                          AS ticket_updated_at
+  t.updated_at                         AS ticket_updated_at
 
 FROM ${ref("grant_content")} c
 
 LEFT JOIN ${ref("stg_grant_members")} m
   ON c.member_id = m.member_id
+
+LEFT JOIN ${ref("stg_team_engagement")} te
+  ON c.content_id = te.content_id
 
 LEFT JOIN ${ref("ticket_metadata")} t
   ON c.content_id = t.content_id

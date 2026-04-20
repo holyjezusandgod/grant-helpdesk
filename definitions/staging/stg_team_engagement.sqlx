@@ -1,0 +1,59 @@
+config {
+  type: "view",
+  name: "stg_team_engagement",
+  description: "Per content_id: has any host or moderator commented or reacted to this member's content? Two boolean signals used in grant_tickets to auto-derive ticket status."
+}
+
+WITH team_members AS (
+
+  SELECT member_id
+  FROM ${ref("core_members")}
+  WHERE client_id    = 'lesko_4022250'
+    AND network_role IN ('host', 'moderator')
+
+),
+
+-- Team left a comment reply on a post
+team_comments AS (
+
+  SELECT
+    CONCAT('post_', CAST(c.targetable_id AS STRING)) AS content_id,
+    MIN(c.created_at)                                AS first_engagement_at
+  FROM ${ref("core_comments")} c
+  INNER JOIN team_members t ON c.author_id = t.member_id
+  WHERE c.client_id       = 'lesko_4022250'
+    AND c.comment_status  = 'active'
+    AND c.targetable_type = 'Post'
+  GROUP BY 1
+
+),
+
+-- Team reacted to anything — post or comment (all unified)
+team_reactions AS (
+
+  SELECT
+    CASE r.targetable_type
+      WHEN 'Post'    THEN CONCAT('post_',    CAST(r.targetable_id AS STRING))
+      WHEN 'Comment' THEN CONCAT('comment_', CAST(r.targetable_id AS STRING))
+    END                  AS content_id,
+    MIN(r.created_at)    AS first_engagement_at
+  FROM ${ref("core_reactions")} r
+  INNER JOIN team_members t ON r.member_id = t.member_id
+  WHERE r.client_id       = 'lesko_4022250'
+    AND r.reaction_status = 'active'
+    AND r.targetable_type IN ('Post', 'Comment')
+  GROUP BY 1
+
+)
+
+SELECT
+  COALESCE(c.content_id, r.content_id)              AS content_id,
+  c.content_id IS NOT NULL                           AS team_commented,
+  r.content_id IS NOT NULL                           AS team_reacted,
+  LEAST(
+    COALESCE(c.first_engagement_at, r.first_engagement_at),
+    COALESCE(r.first_engagement_at, c.first_engagement_at)
+  )                                                  AS first_engagement_at
+
+FROM team_comments  c
+FULL OUTER JOIN team_reactions r ON c.content_id = r.content_id
