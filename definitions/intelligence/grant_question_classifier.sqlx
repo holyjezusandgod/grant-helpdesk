@@ -12,11 +12,14 @@ SELECT
 
   AI.GENERATE_BOOL(
     (
-      'You are a classifier for a grant and financial support community helpdesk. '
-      'Return TRUE if this member content expresses ANY of the following — even if vague, emotional, or not phrased as a direct question: '
-      'a need for financial help, housing, rent, utilities, food, medical care, car repair, business funding, job support, debt relief, disability assistance, or any other resource or grant. '
-      'Also return TRUE if the person is describing a difficult situation (hardship, struggle, crisis) that implies they need help, even if they do not explicitly ask for it. '
-      'Return FALSE ONLY for: pure social reactions (hi, thank you, congrats, emojis), event check-ins, announcements, or content with no connection to a personal need or request. '
+      'You are a classifier for a community helpdesk. Your job is to identify any content that needs a staff or community response. '
+      'Return TRUE if the content contains ANY of the following: '
+      'a question (direct or implied), a request for help or information, a tech issue (broken links, zoom problems, password issues, replay access), '
+      'a membership or billing question, a scheduling or event question, a request directed at a named person or moderator, '
+      'a complaint or frustration that implies something needs to be resolved, a new member introduction that warrants a welcome response, '
+      'or any other content where a reasonable community manager would feel they should reply. '
+      'Return FALSE ONLY for: pure social reactions (likes, congrats, emojis-only, short affirmations like "love this" or "thank you"), '
+      'general commentary with no ask, or announcements from staff with no question embedded. '
       'When in doubt, return TRUE. '
       'Content type: ', content_type, '. Text: ', SUBSTR(body, 1, 1500)
     ),
