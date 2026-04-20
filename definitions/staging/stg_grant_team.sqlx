@@ -1,0 +1,26 @@
+config {
+  type: "view",
+  name: "stg_grant_team",
+  description: "Hosts and moderators of the Lesko grant community. Used to exclude their content from the ticket feed and to populate the assignee dropdown."
+}
+
+SELECT
+  member_id,
+  first_name,
+  last_name,
+  CONCAT(
+    COALESCE(first_name, ''),
+    ' ',
+    COALESCE(last_name, '')
+  )             AS full_name,
+  email_address,
+  network_role,
+  member_type,
+  avatar_url,
+  permalink     AS member_permalink
+
+FROM ${ref("core_members")}
+
+WHERE client_id     = 'lesko_4022250'
+  AND member_status = 'active'
+  AND network_role  IN ('host', 'moderator')

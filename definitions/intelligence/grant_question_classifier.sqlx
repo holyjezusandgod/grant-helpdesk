@@ -1,0 +1,45 @@
+config {
+  type: "incremental",
+  schema: "grant_helpdesk",
+  name: "grant_question_classifier",
+  uniqueKey: ["content_id"],
+  description: "Incremental LLM classification of all member content. Uses AI.GENERATE_BOOL to flag genuine grant-related questions. Already-classified rows are skipped on each run."
+}
+
+WITH candidates AS (
+
+  SELECT
+    content_id,
+    content_type,
+    CONCAT(
+      'You are a classifier for a grant support community helpdesk. ',
+      'A member has posted the following content. ',
+      'Return TRUE if this is a genuine question or request for help about grants, funding, eligibility, applications, or any grant-related topic that a support agent should respond to. ',
+      'Return FALSE if it is a social comment, thank-you, reaction, announcement, general discussion, or any content that does not require a grant expert response. ',
+      'Content type: ', content_type, '. ',
+      'Text: ', SUBSTR(body, 1, 1500)
+    ) AS prompt
+
+  FROM ${ref("stg_grant_candidates")}
+
+  ${when(incremental(), `
+    WHERE content_id NOT IN (
+      SELECT content_id FROM ${self()}
+    )
+  `)}
+
+)
+
+SELECT
+  c.content_id,
+  c.content_type,
+  r.bool_value    AS is_question,
+  CURRENT_TIMESTAMP() AS classified_at
+
+FROM AI.GENERATE_BOOL(
+  MODEL ${ref("grant_llm_model")},
+  TABLE candidates,
+  STRUCT(0.0 AS temperature)
+) AS r
+
+JOIN candidates c ON c.content_id = r.content_id

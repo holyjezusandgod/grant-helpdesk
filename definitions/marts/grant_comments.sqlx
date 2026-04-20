@@ -1,0 +1,16 @@
+config {
+  type: "view",
+  name: "grant_comments",
+  description: "Internal team comments per ticket, ordered oldest-first for thread display."
+}
+
+SELECT
+  c.comment_id,
+  c.content_id,
+  c.author,
+  c.body,
+  c.created_at
+
+FROM ${ref("ticket_comments")} c
+
+ORDER BY c.created_at ASC

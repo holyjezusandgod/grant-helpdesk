@@ -1,0 +1,11 @@
+config {
+  type: "view",
+  name: "stg_grant_candidates",
+  description: "All member content (posts + articles + comments) before LLM classification. This is the input pool for grant_question_classifier."
+}
+
+SELECT * FROM ${ref("stg_grant_posts")}
+UNION ALL
+SELECT * FROM ${ref("stg_grant_articles")}
+UNION ALL
+SELECT * FROM ${ref("stg_grant_member_comments")}

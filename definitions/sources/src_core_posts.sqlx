@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "bigtribebuilders",
+  schema: "dataform",
+  name: "core_posts",
+  description: "Raw post events from BTBR pipeline (all clients)"
+}

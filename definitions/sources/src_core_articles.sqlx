@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "bigtribebuilders",
+  schema: "dataform",
+  name: "core_articles",
+  description: "Raw article events from BTBR pipeline (all clients)"
+}

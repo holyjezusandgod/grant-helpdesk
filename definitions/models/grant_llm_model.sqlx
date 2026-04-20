@@ -1,0 +1,10 @@
+config {
+  type: "operations",
+  schema: "grant_helpdesk",
+  hasOutput: true,
+  description: "Gemini 2.5 Flash model via the MightyNetworks Vertex AI connection. Used for grant question classification."
+}
+
+CREATE OR REPLACE MODEL ${self()}
+REMOTE WITH CONNECTION `bigtribebuilders.eu.mightynetworks`
+OPTIONS (endpoint = 'gemini-2.5-flash')

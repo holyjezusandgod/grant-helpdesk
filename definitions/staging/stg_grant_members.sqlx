@@ -1,0 +1,30 @@
+config {
+  type: "view",
+  name: "stg_grant_members",
+  description: "Active regular members of the Lesko grant community (hosts and moderators excluded). Only fields needed by the helpdesk dashboard."
+}
+
+SELECT
+  member_id,
+  first_name,
+  last_name,
+  CONCAT(
+    COALESCE(first_name, ''),
+    ' ',
+    COALESCE(last_name, '')
+  )                       AS full_name,
+  email_address,
+  state,
+  city,
+  country,
+  member_status,
+  avatar_url,
+  join_date,
+  last_visited_network,
+  permalink               AS member_permalink
+
+FROM ${ref("core_members")}
+
+WHERE client_id     = 'lesko_4022250'
+  AND member_status = 'active'
+  AND network_role NOT IN ('host', 'moderator')

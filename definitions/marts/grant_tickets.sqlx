@@ -1,0 +1,42 @@
+config {
+  type: "view",
+  name: "grant_tickets",
+  description: "Main view for the grant helpdesk dashboard. Joins member content with member profile and ticket metadata. Default status is 'open' when no metadata row exists."
+}
+
+SELECT
+  c.content_id,
+  c.content_type,
+  c.space_id,
+  c.title,
+  c.body,
+  c.permalink,
+  c.created_at,
+  c.updated_at,
+  c.last_activity_at,
+
+  -- member fields
+  m.member_id,
+  m.full_name                           AS member_name,
+  m.first_name,
+  m.last_name,
+  m.email_address,
+  m.state                               AS member_state,
+  m.city                                AS member_city,
+  m.avatar_url,
+  m.join_date,
+  m.last_visited_network,
+  m.member_permalink,
+
+  -- ticket status (defaults to open until team acts)
+  COALESCE(t.status, 'open')            AS ticket_status,
+  t.assigned_to,
+  t.updated_at                          AS ticket_updated_at
+
+FROM ${ref("grant_content")} c
+
+LEFT JOIN ${ref("stg_grant_members")} m
+  ON c.member_id = m.member_id
+
+LEFT JOIN ${ref("ticket_metadata")} t
+  ON c.content_id = t.content_id

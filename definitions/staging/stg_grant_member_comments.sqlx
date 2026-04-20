@@ -1,0 +1,32 @@
+config {
+  type: "view",
+  name: "stg_grant_member_comments",
+  description: "Active comments by regular members on Lesko grant posts. Team authors excluded. HTML stripped."
+}
+
+SELECT
+  CONCAT('comment_', CAST(comment_id AS STRING))    AS content_id,
+  'comment'                                          AS content_type,
+  author_id                                          AS member_id,
+  space_id,
+  CAST(NULL AS STRING)                               AS title,
+  TRIM(REGEXP_REPLACE(
+    REGEXP_REPLACE(comment_text, r'<[^>]+>', ' '),
+    r'\s+', ' '
+  ))                                                 AS body,
+  permalink,
+  created_at,
+  updated_at,
+  created_at                                         AS last_activity_at
+
+FROM ${ref("core_comments")}
+
+WHERE client_id        = 'lesko_4022250'
+  AND comment_status   = 'active'
+  AND targetable_type  = 'Post'
+  AND author_id NOT IN (
+    SELECT member_id
+    FROM ${ref("core_members")}
+    WHERE client_id    = 'lesko_4022250'
+      AND network_role IN ('host', 'moderator')
+  )

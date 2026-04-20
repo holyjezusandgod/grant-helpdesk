@@ -1,0 +1,31 @@
+config {
+  type: "view",
+  name: "stg_grant_posts",
+  description: "Active posts from the Lesko grant community. HTML stripped from body. Prefixed content_id to avoid collision with articles."
+}
+
+SELECT
+  CONCAT('post_', CAST(post_id AS STRING))  AS content_id,
+  'post'                                     AS content_type,
+  creator_id                                 AS member_id,
+  space_id,
+  CAST(NULL AS STRING)                       AS title,
+  TRIM(REGEXP_REPLACE(
+    REGEXP_REPLACE(description, r'<[^>]+>', ' '),
+    r'\s+', ' '
+  ))                                         AS body,
+  permalink,
+  created_at,
+  updated_at,
+  last_activity_at
+
+FROM ${ref("core_posts")}
+
+WHERE client_id   = 'lesko_4022250'
+  AND post_status = 'active'
+  AND creator_id NOT IN (
+    SELECT member_id
+    FROM ${ref("core_members")}
+    WHERE client_id    = 'lesko_4022250'
+      AND network_role IN ('host', 'moderator')
+  )

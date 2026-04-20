@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "bigtribebuilders",
+  schema: "grant_helpdesk",
+  name: "ticket_metadata",
+  description: "App-written table: ticket status and assignee (written by Streamlit, not managed by Dataform)"
+}

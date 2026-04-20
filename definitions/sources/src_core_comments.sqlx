@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "bigtribebuilders",
+  schema: "dataform",
+  name: "core_comments",
+  description: "Raw comment events from BTBR pipeline (all clients)"
+}

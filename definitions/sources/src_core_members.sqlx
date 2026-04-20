@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "bigtribebuilders",
+  schema: "dataform",
+  name: "core_members",
+  description: "Member profiles from BTBR pipeline (all clients)"
+}

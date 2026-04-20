@@ -1,0 +1,11 @@
+config {
+  type: "view",
+  name: "grant_content",
+  description: "Member content confirmed as grant-related questions by the LLM classifier. This is the filtered input for grant_tickets."
+}
+
+SELECT c.*
+FROM ${ref("stg_grant_candidates")} c
+INNER JOIN ${ref("grant_question_classifier")} clf
+  ON c.content_id = clf.content_id
+WHERE clf.is_question = TRUE
