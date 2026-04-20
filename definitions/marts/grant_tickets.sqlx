@@ -34,13 +34,12 @@ SELECT
   te.first_engagement_at,
 
   -- final ticket status:
-  -- (1) manual override from Streamlit wins
-  -- (2) team commented or reacted → answered
+  -- (1) team engaged (commented or reacted) → answered, cannot be overridden
+  -- (2) manual status set in Streamlit → use it (e.g. in_progress to claim a ticket)
   -- (3) nothing → open
-  -- in_progress is manual-only
   CASE
-    WHEN t.status IS NOT NULL                                   THEN t.status
     WHEN te.team_commented = TRUE OR te.team_reacted = TRUE     THEN 'answered'
+    WHEN t.status IS NOT NULL                                   THEN t.status
     ELSE                                                             'open'
   END                                  AS ticket_status,
 
