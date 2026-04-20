@@ -6,5 +6,5 @@ config {
 }
 
 CREATE OR REPLACE MODEL ${self()}
-REMOTE WITH CONNECTION `bigtribebuilders.eu.mightynetworks`
+REMOTE WITH CONNECTION `projects/170880920649/locations/eu/connections/manychat`
 OPTIONS (endpoint = 'gemini-2.5-flash')
