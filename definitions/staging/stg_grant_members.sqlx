@@ -25,6 +25,5 @@ SELECT
 
 FROM ${ref("core_members")}
 
-WHERE client_id     = 'lesko_4022250'
-  AND member_status = 'active'
+WHERE client_id  = 'lesko_4022250'
   AND network_role NOT IN ('host', 'moderator')

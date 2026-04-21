@@ -1,0 +1,99 @@
+config {
+  type: "incremental",
+  schema: "grant_helpdesk",
+  name: "grant_ticket_labels",
+  uniqueKey: ["content_id"],
+  description: "Incremental AI classification of confirmed questions. Assigns difficulty (easy/intermediate/advanced/inappropriate) and domain (topic category) using a single Gemini call per ticket. Already-labeled rows are skipped.",
+  tags: ["ai"]
+}
+
+WITH raw AS (
+  SELECT
+    q.content_id,
+    c.body,
+    c.content_type
+
+  FROM ${ref("grant_question_classifier")} q
+  JOIN ${ref("stg_grant_candidates")} c
+    ON q.content_id = c.content_id
+
+  WHERE q.is_question = TRUE
+
+  ${when(incremental(), `
+    AND q.content_id NOT IN (
+      SELECT content_id FROM ${self()}
+    )
+  `)}
+),
+
+classified AS (
+  SELECT
+    content_id,
+
+    AI.GENERATE_TEXT(
+      (
+        'You are a classifier for a grant and assistance helpdesk. '
+        'Analyse the question below and return a JSON object with exactly two keys.\n\n'
+
+        '"difficulty": one of ["easy", "intermediate", "advanced", "inappropriate"]\n'
+        '  - easy: simple factual question, clear answer exists\n'
+        '  - intermediate: requires some research or nuanced guidance\n'
+        '  - advanced: complex case, legal/financial/medical nuance, needs expert\n'
+        '  - inappropriate: offensive, spam, or completely off-topic\n\n'
+
+        '"domain": one of [\n'
+        '  "Pay Debt & Bills", "Home & Housing Help", "Cars & Car Repairs",\n'
+        '  "Healthcare Assistance", "Start A Business", "Launch A Nonprofit",\n'
+        '  "Boost Your Career", "Taxes Help Guidance", "Find Legal Help",\n'
+        '  "Family & Children", "Seniors & Disabilities", "Programs for Veterans",\n'
+        '  "Community Support", "Other"\n'
+        ']\n'
+        '  - Community Support: questions about the platform itself — login issues, '
+        'zoom links, replay access, membership billing, navigation, how to use the community\n'
+        '  - Other: does not fit any category above\n'
+        'Pick the single domain that best matches the question topic.\n\n'
+
+        'Content type: ', content_type, '\n'
+        'Question: ', SUBSTR(body, 1, 1500)
+      ),
+      endpoint      => 'gemini-2.5-flash',
+      connection_id => 'bigtribebuilders.eu.manychat',
+      model_params  => JSON '{
+        "generation_config": {
+          "response_mime_type": "application/json",
+          "response_schema": {
+            "type": "object",
+            "properties": {
+              "difficulty": {
+                "type": "string",
+                "enum": ["easy", "intermediate", "advanced", "inappropriate"]
+              },
+              "domain": {
+                "type": "string",
+                "enum": [
+                  "Pay Debt & Bills", "Home & Housing Help", "Cars & Car Repairs",
+                  "Healthcare Assistance", "Start A Business", "Launch A Nonprofit",
+                  "Boost Your Career", "Taxes Help Guidance", "Find Legal Help",
+                  "Family & Children", "Seniors & Disabilities", "Programs for Veterans",
+                  "Community Support", "Other"
+                ]
+              }
+            },
+            "required": ["difficulty", "domain"]
+          },
+          "thinking_config": {"thinking_budget": 0}
+        }
+      }'
+    ).result AS classification
+
+  FROM raw
+)
+
+SELECT
+  content_id,
+  JSON_VALUE(classification, '$.difficulty') AS difficulty,
+  JSON_VALUE(classification, '$.domain')     AS domain,
+  CURRENT_TIMESTAMP()                        AS labeled_at
+
+FROM classified
+WHERE classification IS NOT NULL

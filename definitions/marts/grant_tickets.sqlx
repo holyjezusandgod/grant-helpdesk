@@ -45,7 +45,11 @@ SELECT
 
   t.status                             AS manual_status,
   t.assigned_to,
-  t.updated_at                         AS ticket_updated_at
+  t.updated_at                         AS ticket_updated_at,
+
+  -- AI-derived labels; manual values in ticket_metadata take precedence
+  COALESCE(t.difficulty, ai.difficulty) AS difficulty,
+  COALESCE(t.domain,     ai.domain)     AS domain
 
 FROM ${ref("grant_content")} c
 
@@ -57,3 +61,6 @@ LEFT JOIN ${ref("stg_team_engagement")} te
 
 LEFT JOIN ${ref("ticket_metadata")} t
   ON c.content_id = t.content_id
+
+LEFT JOIN ${ref("grant_ticket_labels")} ai
+  ON c.content_id = ai.content_id

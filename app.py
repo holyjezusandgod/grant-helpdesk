@@ -1,0 +1,441 @@
+import os
+import datetime
+import streamlit as st
+import bq_client
+import config
+
+st.set_page_config(page_title=config.APP_NAME, layout="wide")
+
+STATUS_ICON = {
+    "new":       "🆕",
+    "assigned":  "🟡",
+    "closed":    "🟢",
+    "cancelled": "⛔",
+}
+URGENCY_ICON = {
+    "normal":   "🟢",
+    "urgent":   "🟠",
+    "critical": "🔴",
+}
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
+current_user = os.environ.get("LESKO_USER", "")
+
+# ── Session state defaults ─────────────────────────────────────────────────────
+if "member_id_filter" not in st.session_state:
+    st.session_state.member_id_filter = ""
+
+# ── Sidebar ────────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.title(config.APP_NAME)
+
+    if current_user:
+        st.markdown(f"Logged in as **{current_user}**")
+    else:
+        st.warning("Set the `LESKO_USER` environment variable to identify yourself.")
+
+    st.divider()
+    st.subheader("Filters")
+
+    # 1. Status
+    filter_status = st.selectbox("Status", ["All"] + config.TICKET_STATUSES)
+
+    # 2. Date range
+    today = datetime.date.today()
+    date_range_option = st.radio(
+        "Date range",
+        ["Today", "This week", "This month", "Custom"],
+        horizontal=True,
+    )
+    if date_range_option == "Today":
+        date_from, date_to = today, today
+    elif date_range_option == "This week":
+        date_from = today - datetime.timedelta(days=today.weekday())
+        date_to   = today
+    elif date_range_option == "This month":
+        date_from = today.replace(day=1)
+        date_to   = today
+    else:
+        custom_range = st.date_input(
+            "Select range",
+            value=(today - datetime.timedelta(days=7), today),
+        )
+        if isinstance(custom_range, (list, tuple)) and len(custom_range) == 2:
+            date_from, date_to = custom_range
+        else:
+            date_from = date_to = custom_range
+
+    # 3. Assigned to
+    team_members = bq_client.get_team_members()
+    filter_assignee = st.selectbox("Assigned to", ["All"] + team_members)
+
+    # 4. Member ID
+    filter_member_id = st.text_input("Member ID", value=st.session_state.member_id_filter)
+
+    # 5. Urgency
+    filter_urgency = st.selectbox("Urgency", ["All", "Normal", "Urgent", "Critical"])
+
+    # 6. Difficulty
+    filter_difficulty = st.selectbox(
+        "Difficulty",
+        ["All"] + [d.capitalize() for d in config.DIFFICULTY_LEVELS],
+    )
+
+    # 7. Domain
+    filter_domain = st.selectbox("Domain", ["All"] + config.DOMAINS)
+
+    if st.button("🔄 Refresh", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+
+# ── Data loaders ───────────────────────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def load_tickets(status, date_from, date_to, assignee, member_id, urgency, difficulty, domain):
+    return bq_client.get_tickets(
+        status=status,
+        date_from=str(date_from),
+        date_to=str(date_to),
+        assignee=assignee,
+        member_id=member_id or None,
+        urgency=urgency,
+        difficulty=difficulty,
+        domain=domain,
+    )
+
+@st.cache_data(ttl=60)
+def load_open_stats():
+    return bq_client.get_open_stats()
+
+@st.cache_data(ttl=60)
+def load_daily_stats():
+    return bq_client.get_daily_stats()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TICKET DETAIL DIALOG
+# ══════════════════════════════════════════════════════════════════════════════
+@st.dialog("Ticket Detail", width="large")
+def show_ticket_dialog(content_id: str):
+    ticket = bq_client.get_ticket_detail(content_id)
+    if not ticket:
+        st.warning("Ticket not found.")
+        return
+
+    status_icon  = STATUS_ICON.get(ticket.get("ticket_status"), "⚪")
+    urgency_icon = URGENCY_ICON.get(ticket.get("urgency"), "⚪")
+    content_type = ticket.get("content_type") or "—"
+
+    # Header
+    st.subheader(
+        f"{status_icon} {ticket.get('member_name', 'Unknown')}  "
+        f"{urgency_icon} {(ticket.get('urgency') or '').capitalize()}  "
+        f"· `{content_type}`"
+    )
+
+    # Metadata
+    m1, m2, m3, m4 = st.columns(4)
+    m1.markdown(f"**State:** {ticket.get('member_state') or '—'}")
+    m2.markdown(f"**City:** {ticket.get('member_city') or '—'}")
+    m3.markdown(f"**Member ID:** {ticket.get('member_id') or '—'}")
+    m4.markdown(f"**Posted:** {str(ticket.get('created_at', '—'))[:16]}")
+    st.markdown(f"[MightyNetworks Profile ↗]({ticket.get('member_permalink', '')})")
+
+    st.divider()
+
+    # Full question
+    st.markdown("**Question**")
+    with st.container(height=200):
+        st.markdown(ticket.get("body", ""))
+    st.markdown(f"[View on MightyNetworks ↗]({ticket.get('permalink', '')})")
+
+    st.divider()
+
+    # Editable fields
+    st.markdown("**Update Ticket**")
+    can_edit = ticket.get("ticket_status") != "closed"
+
+    c1, c2 = st.columns(2)
+    with c1:
+        current_status = ticket.get("manual_status") or ticket.get("ticket_status") or "new"
+        if current_status not in config.TICKET_STATUSES:
+            current_status = "new"
+        new_status = st.selectbox(
+            "Status",
+            config.TICKET_STATUSES,
+            index=config.TICKET_STATUSES.index(current_status),
+            disabled=not can_edit,
+            key=f"status_{content_id}",
+            format_func=lambda s: f"{STATUS_ICON.get(s, '')} {s.capitalize()}",
+        )
+    with c2:
+        assignee_options    = ["— unassigned —"] + team_members
+        current_assignee    = ticket.get("assigned_to") or "— unassigned —"
+        if current_assignee not in assignee_options:
+            current_assignee = "— unassigned —"
+        new_assignee = st.selectbox(
+            "Assigned to",
+            assignee_options,
+            index=assignee_options.index(current_assignee),
+            key=f"assignee_{content_id}",
+        )
+
+    c3, c4 = st.columns(2)
+    with c3:
+        diff_options    = ["— unset —"] + config.DIFFICULTY_LEVELS
+        current_diff    = ticket.get("difficulty") or "— unset —"
+        if current_diff not in diff_options:
+            current_diff = "— unset —"
+        new_difficulty = st.selectbox(
+            "Difficulty",
+            diff_options,
+            index=diff_options.index(current_diff),
+            key=f"diff_{content_id}",
+        )
+    with c4:
+        domain_options  = ["— unset —"] + config.DOMAINS
+        current_domain  = ticket.get("domain") or "— unset —"
+        if current_domain not in domain_options:
+            current_domain = "— unset —"
+        new_domain = st.selectbox(
+            "Domain",
+            domain_options,
+            index=domain_options.index(current_domain),
+            key=f"domain_{content_id}",
+        )
+
+    if can_edit:
+        if st.button("💾 Save changes", key=f"save_{content_id}"):
+            assignee_val   = "" if new_assignee  == "— unassigned —" else new_assignee
+            difficulty_val = "" if new_difficulty == "— unset —"     else new_difficulty
+            domain_val     = "" if new_domain     == "— unset —"     else new_domain
+            bq_client.update_ticket_meta(
+                content_id, new_status, assignee_val, difficulty_val, domain_val
+            )
+            st.cache_data.clear()
+            st.success("Saved.")
+            st.rerun()
+    else:
+        st.caption("⚠️ Ticket is closed — status locked.")
+
+    st.divider()
+
+    # Answer entry
+    st.markdown("**Post an Answer**")
+    if not current_user:
+        st.warning("Set the `LESKO_USER` env var to post answers.")
+    else:
+        answer_body = st.text_area(
+            "Answer", key=f"answer_{content_id}",
+            label_visibility="collapsed", height=120,
+        )
+        if st.button("Post Answer", key=f"post_answer_{content_id}"):
+            if answer_body.strip():
+                bq_client.post_comment(content_id, current_user, answer_body.strip())
+                st.success("Answer posted.")
+                st.rerun()
+            else:
+                st.warning("Answer cannot be empty.")
+
+    st.divider()
+
+    # Internal comment thread
+    st.markdown("**Internal Thread**")
+    comments = bq_client.get_comments(content_id)
+    if comments.empty:
+        st.caption("No internal comments yet.")
+    else:
+        for _, c in comments.iterrows():
+            with st.chat_message("assistant"):
+                st.markdown(f"**{c['author']}** · {str(c['created_at'])[:16]}")
+                st.markdown(c["body"])
+
+    st.markdown("**Add Internal Comment**")
+    if not current_user:
+        st.warning("Set the `LESKO_USER` env var to post comments.")
+    else:
+        comment_body = st.text_area(
+            "Comment", key=f"comment_{content_id}", label_visibility="collapsed"
+        )
+        if st.button("Post Comment", key=f"post_comment_{content_id}"):
+            if comment_body.strip():
+                bq_client.post_comment(content_id, current_user, comment_body.strip())
+                st.success("Comment posted.")
+                st.rerun()
+            else:
+                st.warning("Comment cannot be empty.")
+
+    st.divider()
+
+    # Placeholders
+    ph1, ph2 = st.columns(2)
+    ph1.button(
+        "🤖 AI-generated answer", disabled=True,
+        help="Coming soon", key=f"ai_{content_id}",
+        use_container_width=True,
+    )
+    ph2.button(
+        "📋 Predefined answers", disabled=True,
+        help="Coming soon", key=f"pre_{content_id}",
+        use_container_width=True,
+    )
+
+    # Call sheet stub
+    with st.expander("📋 Call Sheet Report"):
+        st.caption("Prompt template wiring coming soon.")
+        st.text_input("State",  value=ticket.get("member_state") or "", disabled=True)
+        st.text_input("Domain", value=ticket.get("domain") or "",       disabled=True)
+        st.button("Generate Report", disabled=True, help="Coming soon", key=f"callsheet_{content_id}")
+
+    # Member history
+    with st.expander(f"📋 Member history ({ticket.get('member_name', '')})"):
+        history = bq_client.get_member_history(
+            ticket["member_id"], exclude_content_id=ticket["content_id"]
+        )
+        if history.empty:
+            st.write("No other tickets from this member.")
+        else:
+            for _, h in history.iterrows():
+                h_icon = STATUS_ICON.get(h["ticket_status"], "⚪")
+                st.markdown(f"{h_icon} `{str(h['created_at'])[:10]}` — {h['body_preview']}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TABS
+# ══════════════════════════════════════════════════════════════════════════════
+tab_main, tab_reports = st.tabs(["Tickets", "Reports"])
+
+
+# ── MAIN TAB ──────────────────────────────────────────────────────────────────
+with tab_main:
+    tickets     = load_tickets(
+        filter_status, date_from, date_to,
+        filter_assignee, filter_member_id,
+        filter_urgency, filter_difficulty, filter_domain,
+    )
+    open_stats  = load_open_stats()
+    daily_stats = load_daily_stats()
+
+    # KPI Row A — open breakdown
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("🆕 Open",     int(open_stats.get("open",     0)))
+    a2.metric("🟢 Normal",   int(open_stats.get("normal",   0)))
+    a3.metric("🟠 Urgent",   int(open_stats.get("urgent",   0)))
+    a4.metric("🔴 Critical", int(open_stats.get("critical", 0)))
+
+    # KPI Row B — daily productivity
+    answered_today = int(daily_stats.get("answered_today", 0))
+    goal           = int(daily_stats.get("goal", config.DAILY_GOAL))
+    b1, b2, b3, b4 = st.columns(4)
+    b1.metric("📥 In today",       int(daily_stats.get("in_today",   0)))
+    b2.metric("✅ Answered today",  answered_today)
+    b3.metric("📈 Daily avg (30d)", daily_stats.get("daily_avg",     0))
+    b4.metric("🎯 Goal progress",  f"{answered_today} / {goal}")
+
+    st.divider()
+
+    # Ticket table
+    st.subheader(f"Tickets ({len(tickets)})")
+
+    if tickets.empty:
+        st.info("No tickets match the current filters.")
+    else:
+        # Table header
+        h0, h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.1, 1.2, 0.5, 0.4])
+        for col, label in zip(
+            [h0, h1, h2, h3, h4, h5, h6, h7, h8],
+            ["Timestamp", "Member", "Question", "Assigned to",
+             "Difficulty", "Urgency", "Status", "Link", ""],
+        ):
+            col.markdown(f"**{label}**")
+
+        st.divider()
+
+        for _, row in tickets.iterrows():
+            c0, c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.1, 1.2, 0.5, 0.4])
+
+            c0.caption(str(row["created_at"])[:16])
+
+            # Member name — clicking fills the member ID filter
+            if c1.button(
+                row["member_name"] or "Unknown",
+                key=f"member_{row['content_id']}",
+                use_container_width=True,
+            ):
+                st.session_state.member_id_filter = str(row["member_id"])
+                st.rerun()
+
+            c2.caption(str(row["body_preview"] or "")[:120])
+            c3.caption(row["assigned_to"] or "—")
+            c4.caption((row["difficulty"] or "—").capitalize())
+            c5.caption(f"{URGENCY_ICON.get(row['urgency'], '⚪')} {(row['urgency'] or '').capitalize()}")
+            c6.caption(f"{STATUS_ICON.get(row['ticket_status'], '⚪')} {(row['ticket_status'] or '').capitalize()}")
+
+            permalink = row.get("permalink") or ""
+            if permalink:
+                c7.markdown(f"[🔗]({permalink})")
+
+            if c8.button("→", key=f"open_{row['content_id']}"):
+                show_ticket_dialog(row["content_id"])
+
+
+# ── REPORTS TAB ───────────────────────────────────────────────────────────────
+with tab_reports:
+    st.subheader("Reports")
+
+    r1, r2 = st.columns(2)
+    with r1:
+        r_date_from = st.date_input(
+            "From", value=today - datetime.timedelta(days=30), key="r_from"
+        )
+    with r2:
+        r_date_to = st.date_input("To", value=today, key="r_to")
+
+    st.divider()
+
+    # 12.1 Volume
+    st.markdown("#### Volume — Tickets In vs Answered")
+    vol = bq_client.get_report_data("volume", str(r_date_from), str(r_date_to))
+    if not vol.empty:
+        st.bar_chart(vol.set_index("date")[["tickets_in", "tickets_closed"]])
+    else:
+        st.caption("No data for this period.")
+
+    st.divider()
+
+    # 12.2 Response time
+    st.markdown("#### Response Time")
+    rt = bq_client.get_report_data("response_time", str(r_date_from), str(r_date_to))
+    if not rt.empty:
+        avg_min = round(rt["minutes_to_response"].mean(), 1)
+        med_min = round(rt["minutes_to_response"].median(), 1)
+        sla_pct = round((rt["minutes_to_response"] < 1440).mean() * 100, 1)
+        rr1, rr2, rr3 = st.columns(3)
+        rr1.metric("Avg time to first response", f"{avg_min} min")
+        rr2.metric("Median",                     f"{med_min} min")
+        rr3.metric("% answered within 24 h",     f"{sla_pct}%")
+    else:
+        st.caption("No data for this period.")
+
+    st.divider()
+
+    # 12.3 Team productivity
+    st.markdown("#### Team Productivity — Tickets Closed")
+    tp = bq_client.get_report_data("team_productivity", str(r_date_from), str(r_date_to))
+    if not tp.empty:
+        st.bar_chart(tp.set_index("assigned_to")["tickets_closed"])
+    else:
+        st.caption("No data for this period.")
+
+    st.divider()
+
+    # 12.4 Domain breakdown
+    st.markdown("#### Domain Breakdown")
+    db = bq_client.get_report_data("domain_breakdown", str(r_date_from), str(r_date_to))
+    if not db.empty:
+        st.bar_chart(db.set_index("domain")["tickets"])
+    else:
+        st.caption("No data for this period.")
+
+    st.divider()
+    st.button("📥 Export to Excel", disabled=True, help="Coming soon")
