@@ -44,10 +44,9 @@ with st.sidebar:
         a.markdown(f"**{label}**")
         return b
 
-    # 1. Status
-    all_statuses = config.TICKET_STATUSES + config.FEEDBACK_STATUSES
+    # 1. Status (feedback statuses live in the Train AI tab, not here)
     filter_status = filter_row("Status").selectbox(
-        "Status", ["All"] + all_statuses,
+        "Status", ["All"] + config.TICKET_STATUSES,
         format_func=lambda s: s if s == "All" else s.replace("_", " ").title(),
         label_visibility="collapsed",
     )
@@ -340,7 +339,7 @@ def show_ticket_dialog(content_id: str):
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
-tab_main, tab_reports, tab_settings = st.tabs(["Tickets", "Reports", "Settings"])
+tab_main, tab_reports, tab_train, tab_settings = st.tabs(["Tickets", "Reports", "Train AI", "Settings"])
 
 
 # ── MAIN TAB ──────────────────────────────────────────────────────────────────
@@ -476,6 +475,82 @@ with tab_reports:
 
     st.divider()
     st.button("📥 Export to Excel", disabled=True, help="Coming soon")
+
+
+# ── TRAIN AI TAB ──────────────────────────────────────────────────────────────
+with tab_train:
+    st.subheader("Train AI — Classifier Rejects")
+    st.caption(
+        "These are posts and articles the AI decided were **not** grant questions. "
+        "If you spot a mistake, open the ticket and set the status to "
+        "**Confirmed Question** — that feedback is used to improve the classifier."
+    )
+
+    st.divider()
+
+    # Filters
+    tf1, tf2, tf3 = st.columns(3)
+    with tf1:
+        train_date_from = st.date_input(
+            "From", value=today - datetime.timedelta(days=7), key="train_from"
+        )
+    with tf2:
+        train_date_to = st.date_input("To", value=today, key="train_to")
+    with tf3:
+        content_type_options = ["Posts & Articles", "Posts only", "Articles only", "All (incl. comments)"]
+        train_content_filter = st.selectbox("Content type", content_type_options, key="train_ct")
+
+    content_type_map = {
+        "Posts & Articles":       ["post", "article"],
+        "Posts only":             ["post"],
+        "Articles only":          ["article"],
+        "All (incl. comments)":   None,
+    }
+    allowed_types = content_type_map[train_content_filter]
+
+    @st.cache_data(ttl=60)
+    def load_rejects(date_from, date_to, allowed_types):
+        df = bq_client.get_tickets(
+            status="not_a_question",
+            date_from=str(date_from),
+            date_to=str(date_to),
+        )
+        if allowed_types and not df.empty and "content_type" in df.columns:
+            df = df[df["content_type"].isin(allowed_types)]
+        return df
+
+    rejects = load_rejects(train_date_from, train_date_to, tuple(allowed_types) if allowed_types else None)
+
+    st.markdown(f"**{len(rejects)} items** the classifier skipped in this period")
+
+    if rejects.empty:
+        st.info("No classifier rejects for this period and filter.")
+    else:
+        rh0, rh1, rh2, rh3, rh4, rh5 = st.columns([1.4, 1.2, 1.0, 3.5, 0.5, 0.4])
+        for col, label in zip(
+            [rh0, rh1, rh2, rh3, rh4, rh5],
+            ["Timestamp", "Member", "Type", "Preview", "Link", ""],
+        ):
+            col.markdown(f"**{label}**")
+        st.divider()
+
+        for _, row in rejects.iterrows():
+            rc0, rc1, rc2, rc3, rc4, rc5 = st.columns([1.4, 1.2, 1.0, 3.5, 0.5, 0.4])
+            rc0.caption(str(row["created_at"])[:16])
+            rc1.caption(row.get("member_name") or "—")
+            rc2.caption((row.get("content_type") or "—").capitalize())
+            rc3.caption(str(row.get("body_preview") or "")[:140])
+            permalink = row.get("permalink") or ""
+            if permalink:
+                rc4.markdown(f"[🔗]({permalink})")
+            if rc5.button("→", key=f"train_open_{row['content_id']}"):
+                show_ticket_dialog(row["content_id"])
+
+    st.divider()
+    st.caption(
+        "Marking a post as **Confirmed Question** inside the ticket dialog flags it as a "
+        "classifier false negative. The weekly Dataform pipeline collects these and updates the prompt."
+    )
 
 
 # ── SETTINGS TAB ──────────────────────────────────────────────────────────────

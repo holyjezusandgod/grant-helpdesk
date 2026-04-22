@@ -2,11 +2,10 @@ config {
   type: "table",
   name: "grant_content",
   tags: ["helpdesk"],
-  description: "Member content confirmed as grant-related questions by the LLM classifier. This is the filtered input for grant_tickets."
+  description: "All classified member content. is_question=TRUE means the LLM classifier selected it as a grant question; FALSE means it was rejected. grant_tickets uses this flag to set the default ticket status."
 }
 
-SELECT c.*
+SELECT c.*, clf.is_question
 FROM ${ref("stg_grant_candidates")} c
 INNER JOIN ${ref("grant_question_classifier")} clf
   ON c.content_id = clf.content_id
-WHERE clf.is_question = TRUE

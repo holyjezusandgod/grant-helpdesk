@@ -36,11 +36,13 @@ SELECT
 
   -- final ticket status:
   -- (1) team engaged (commented or reacted) → answered, cannot be overridden
-  -- (2) manual status set in Streamlit → use it (e.g. in_progress to claim a ticket)
-  -- (3) nothing → open
+  -- (2) manual status set in Streamlit → use it
+  -- (3) classifier rejected → not_a_question
+  -- (4) nothing → open
   CASE
     WHEN te.team_commented = TRUE OR te.team_reacted = TRUE     THEN 'answered'
     WHEN t.status IS NOT NULL                                   THEN t.status
+    WHEN c.is_question = FALSE                                  THEN 'not_a_question'
     ELSE                                                             'open'
   END                                  AS ticket_status,
 
