@@ -2,7 +2,7 @@ config {
   type: "operations",
   name: "update_classifier_prompt",
   tags: ["prompt_update"],
-  dependencies: ["grant_classification_feedback", "grant_prompt_config"],
+  dependencies: ["grant_classification_feedback", "grant_prompt_config", "llm_model"],
   description: "Weekly operation: reads team feedback, calls Gemini to propose a refined classifier prompt, and inserts a new version into grant_prompt_config. Only runs if 5+ feedback examples exist and Gemini finds a clear pattern."
 }
 
@@ -144,17 +144,16 @@ WITH
     WHERE fc.cnt >= 5   -- gate: skip if not enough feedback signal
   ),
 
-  -- AI.GENERATE_TEXT is a TVF — it takes TABLE input, returns input cols + `text`
+  -- ML.GENERATE_TEXT is a TVF — takes MODEL + TABLE, returns input cols + ml_generate_text_result JSON
   ai_result AS (
     SELECT
-      text       AS response,
+      JSON_VALUE(ml_generate_text_result, '$.candidates[0].content.parts[0].text') AS response,
       old_prompt,
       old_version
-    FROM AI.GENERATE_TEXT(
+    FROM ML.GENERATE_TEXT(
+      MODEL ${ref("llm_model")},
       TABLE prompt_input,
-      endpoint      => 'gemini-2.5-flash',
-      connection_id => 'bigtribebuilders.eu.manychat',
-      model_params  => JSON '{"generation_config": {"thinking_config": {"thinking_budget": 0}}}'
+      STRUCT(8192 AS max_output_tokens)
     )
   ),
 
