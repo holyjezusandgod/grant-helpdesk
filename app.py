@@ -37,27 +37,37 @@ with st.sidebar:
     st.divider()
     st.subheader("Filters")
 
+    today = datetime.date.today()
+
+    def filter_row(label):
+        a, b = st.columns([1, 2])
+        a.markdown(f"**{label}**")
+        return b
+
     # 1. Status
-    filter_status = st.selectbox("Status", ["All"] + config.TICKET_STATUSES)
+    filter_status = filter_row("Status").selectbox(
+        "Status", ["All"] + config.TICKET_STATUSES,
+        format_func=lambda s: s if s == "All" else s.capitalize(),
+        label_visibility="collapsed",
+    )
 
     # 2. Date range
-    today = datetime.date.today()
     date_range_option = st.radio(
-        "Date range",
-        ["Today", "This week", "This month", "Custom"],
+        "Date Range",
+        ["Today", "This Week", "This Month", "Custom"],
         horizontal=True,
     )
     if date_range_option == "Today":
         date_from, date_to = today, today
-    elif date_range_option == "This week":
+    elif date_range_option == "This Week":
         date_from = today - datetime.timedelta(days=today.weekday())
         date_to   = today
-    elif date_range_option == "This month":
+    elif date_range_option == "This Month":
         date_from = today.replace(day=1)
         date_to   = today
     else:
         custom_range = st.date_input(
-            "Select range",
+            "Select Range",
             value=(today - datetime.timedelta(days=7), today),
         )
         if isinstance(custom_range, (list, tuple)) and len(custom_range) == 2:
@@ -65,24 +75,37 @@ with st.sidebar:
         else:
             date_from = date_to = custom_range
 
-    # 3. Assigned to
+    # 3. Assigned To
     team_members = bq_client.get_team_members()
-    filter_assignee = st.selectbox("Assigned to", ["All"] + team_members)
+    filter_assignee = filter_row("Assigned To").selectbox(
+        "Assigned To", ["All"] + team_members,
+        label_visibility="collapsed",
+    )
 
     # 4. Member ID
-    filter_member_id = st.text_input("Member ID", value=st.session_state.member_id_filter)
+    filter_member_id = filter_row("Member ID").text_input(
+        "Member ID", value=st.session_state.member_id_filter,
+        label_visibility="collapsed",
+    )
 
     # 5. Urgency
-    filter_urgency = st.selectbox("Urgency", ["All", "Normal", "Urgent", "Critical"])
+    filter_urgency = filter_row("Urgency").selectbox(
+        "Urgency", ["All", "Normal", "Urgent", "Critical"],
+        label_visibility="collapsed",
+    )
 
     # 6. Difficulty
-    filter_difficulty = st.selectbox(
+    filter_difficulty = filter_row("Difficulty").selectbox(
         "Difficulty",
         ["All"] + [d.capitalize() for d in config.DIFFICULTY_LEVELS],
+        label_visibility="collapsed",
     )
 
     # 7. Domain
-    filter_domain = st.selectbox("Domain", ["All"] + config.DOMAINS)
+    filter_domain = filter_row("Domain").selectbox(
+        "Domain", ["All"] + config.DOMAINS,
+        label_visibility="collapsed",
+    )
 
     if st.button("🔄 Refresh", use_container_width=True):
         st.cache_data.clear()
@@ -174,7 +197,7 @@ def show_ticket_dialog(content_id: str):
         if current_assignee not in assignee_options:
             current_assignee = "— unassigned —"
         new_assignee = st.selectbox(
-            "Assigned to",
+            "Assigned To",
             assignee_options,
             index=assignee_options.index(current_assignee),
             key=f"assignee_{content_id}",
@@ -344,7 +367,7 @@ with tab_main:
         h0, h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.1, 1.2, 0.5, 0.4])
         for col, label in zip(
             [h0, h1, h2, h3, h4, h5, h6, h7, h8],
-            ["Timestamp", "Member", "Question", "Assigned to",
+            ["Timestamp", "Member", "Question", "Assigned To",
              "Difficulty", "Urgency", "Status", "Link", ""],
         ):
             col.markdown(f"**{label}**")
