@@ -1,6 +1,9 @@
 config {
-  type: "view",
+  type: "incremental",
   name: "stg_grant_posts",
+  uniqueKey: ["content_id"],
+  bigquery: { partitionBy: "DATE(created_at)" },
+  tags: ["helpdesk"],
   description: "Active posts from the Lesko grant community. HTML stripped from body. Prefixed content_id to avoid collision with articles."
 }
 
@@ -29,3 +32,7 @@ WHERE client_id   = 'lesko_4022250'
     WHERE client_id    = 'lesko_4022250'
       AND network_role IN ('host', 'moderator')
   )
+  AND creator_id NOT IN (
+    SELECT member_id FROM ${ref("info_avatars")} WHERE client_id = 'lesko_4022250'
+  )
+  ${ when(incremental(), `AND created_at > (SELECT MAX(created_at) FROM ${self()})`) }

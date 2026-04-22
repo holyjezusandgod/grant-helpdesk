@@ -1,6 +1,7 @@
 config {
-  type: "view",
+  type: "table",
   name: "stg_team_engagement",
+  tags: ["helpdesk"],
   description: "Per content_id: has any host or moderator commented or reacted to this member's content? Two boolean signals used in grant_tickets to auto-derive ticket status."
 }
 

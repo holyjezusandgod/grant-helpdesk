@@ -1,6 +1,7 @@
 config {
-  type: "view",
+  type: "table",
   name: "grant_content",
+  tags: ["helpdesk"],
   description: "Member content confirmed as grant-related questions by the LLM classifier. This is the filtered input for grant_tickets."
 }
 

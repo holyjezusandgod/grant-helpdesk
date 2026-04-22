@@ -1,6 +1,7 @@
 config {
-  type: "view",
+  type: "table",
   name: "stg_grant_members",
+  tags: ["helpdesk"],
   description: "Active regular members of the Lesko grant community (hosts and moderators excluded). Only fields needed by the helpdesk dashboard."
 }
 
@@ -26,4 +27,7 @@ SELECT
 FROM ${ref("core_members")}
 
 WHERE client_id  = 'lesko_4022250'
-  AND network_role NOT IN ('host', 'moderator')
+  AND (network_role IS NULL OR network_role NOT IN ('host', 'moderator'))
+  AND member_id NOT IN (
+    SELECT member_id FROM ${ref("info_avatars")} WHERE client_id = 'lesko_4022250'
+  )

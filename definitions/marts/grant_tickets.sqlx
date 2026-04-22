@@ -1,6 +1,7 @@
 config {
-  type: "view",
+  type: "table",
   name: "grant_tickets",
+  tags: ["helpdesk"],
   description: "Main view for the grant helpdesk dashboard. Status priority: (1) manual override from ticket_metadata, (2) team_commented → answered, (3) team_reacted → in_progress, (4) open."
 }
 

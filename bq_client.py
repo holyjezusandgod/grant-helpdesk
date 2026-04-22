@@ -156,15 +156,17 @@ def update_ticket_meta(
 
 
 def get_open_stats() -> dict:
+    # 'open' is the default status in the view; 'new'/'assigned' are manual overrides.
+    # All three mean the ticket is still unresolved.
     sql = f"""
         SELECT
-            COUNTIF(ticket_status IN ('new', 'assigned'))                                            AS open,
-            COUNTIF(ticket_status IN ('new', 'assigned')
-                AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24)                      AS normal,
-            COUNTIF(ticket_status IN ('new', 'assigned')
-                AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) BETWEEN 24 AND 47)         AS urgent,
-            COUNTIF(ticket_status IN ('new', 'assigned')
-                AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) >= 48)                     AS critical
+            COUNTIF(ticket_status IN ('open', 'new', 'assigned'))                                       AS open,
+            COUNTIF(ticket_status IN ('open', 'new', 'assigned')
+                AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24)                         AS normal,
+            COUNTIF(ticket_status IN ('open', 'new', 'assigned')
+                AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) BETWEEN 24 AND 47)            AS urgent,
+            COUNTIF(ticket_status IN ('open', 'new', 'assigned')
+                AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) >= 48)                        AS critical
         FROM `{config.TICKETS_TABLE}`
     """
     row = client.query(sql).to_dataframe().iloc[0]
@@ -172,17 +174,18 @@ def get_open_stats() -> dict:
 
 
 def get_daily_stats() -> dict:
+    # 'answered' = team engaged; 'closed' = manually closed — both count as resolved.
     sql = f"""
         SELECT
-            COUNTIF(DATE(created_at) = CURRENT_DATE())                                         AS in_today,
-            COUNTIF(ticket_status = 'closed'
-                AND DATE(ticket_updated_at) = CURRENT_DATE())                                   AS answered_today,
+            COUNTIF(DATE(created_at) = CURRENT_DATE())                                              AS in_today,
+            COUNTIF(ticket_status IN ('answered', 'closed')
+                AND DATE(COALESCE(first_engagement_at, ticket_updated_at)) = CURRENT_DATE())        AS answered_today,
             ROUND(
                 COUNTIF(
-                    ticket_status = 'closed'
+                    ticket_status IN ('answered', 'closed')
                     AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
                 ) / 30.0, 1
-            )                                                                                   AS daily_avg
+            )                                                                                       AS daily_avg
         FROM `{config.TICKETS_TABLE}`
     """
     row = client.query(sql).to_dataframe().iloc[0]

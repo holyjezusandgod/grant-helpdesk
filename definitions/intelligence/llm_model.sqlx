@@ -1,0 +1,12 @@
+config {
+  type: "operations",
+  schema: "grant_helpdesk",
+  name: "llm_model",
+  hasOutput: true,
+  description: "BigQuery ML remote model pointing to gemini-2.5-flash via the shared EU connection."
+}
+
+CREATE OR REPLACE MODEL ${self()}
+REMOTE WITH CONNECTION
+    `projects/bigtribebuilders/locations/eu/connections/manychat`
+OPTIONS (endpoint = 'gemini-2.5-flash');

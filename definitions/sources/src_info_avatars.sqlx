@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "bigtribebuilders",
+  schema: "dataform",
+  name: "info_avatars",
+  description: "Fake/bot avatar members managed by BTBR. Exclude from all member-facing pipelines."
+}

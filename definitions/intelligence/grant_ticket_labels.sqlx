@@ -1,99 +1,82 @@
 config {
-  type: "incremental",
+  type: "operations",
   schema: "grant_helpdesk",
   name: "grant_ticket_labels",
-  uniqueKey: ["content_id"],
-  description: "Incremental AI classification of confirmed questions. Assigns difficulty (easy/intermediate/advanced/inappropriate) and domain (topic category) using a single Gemini call per ticket. Already-labeled rows are skipped.",
+  hasOutput: true,
+  description: "AI classification of confirmed questions. Uses a temp table to force BigQuery to filter BEFORE calling Gemini, so ML is only run on confirmed questions (is_question = TRUE), not all candidates.",
   tags: ["ai"]
 }
 
-WITH raw AS (
-  SELECT
-    q.content_id,
-    c.body,
-    c.content_type
+-- Step 0: ensure the target table exists (required before MERGE).
+CREATE TABLE IF NOT EXISTS `bigtribebuilders.grant_helpdesk.grant_ticket_labels` (
+  content_id   STRING NOT NULL,
+  difficulty   STRING,
+  domain       STRING,
+  labeled_at   TIMESTAMP
+);
 
-  FROM ${ref("grant_question_classifier")} q
-  JOIN ${ref("stg_grant_candidates")} c
-    ON q.content_id = c.content_id
+-- Step 1: materialise only confirmed questions into a temp table.
+-- This forces BigQuery to apply the is_question filter BEFORE the ML call.
+CREATE TEMP TABLE questions AS
+SELECT
+  q.content_id,
+  CONCAT(
+    'You are a classifier for a grant and assistance helpdesk. ',
+    'Respond with ONLY a valid JSON object — no explanation, no markdown, no extra text.\n\n',
+    'Return exactly: {"difficulty": "...", "domain": "..."}\n\n',
+    'difficulty must be one of: easy, intermediate, advanced, inappropriate\n',
+    '  easy = simple factual question with a clear answer\n',
+    '  intermediate = requires research or nuanced guidance\n',
+    '  advanced = complex legal, financial, or medical nuance\n',
+    '  inappropriate = offensive, spam, or completely off-topic\n\n',
+    'domain must be exactly one of these strings:\n',
+    '  Pay Debt & Bills | Home & Housing Help | Cars & Car Repairs | ',
+    'Healthcare Assistance | Start A Business | Launch A Nonprofit | ',
+    'Boost Your Career | Taxes Help Guidance | Find Legal Help | ',
+    'Family & Children | Seniors & Disabilities | Programs for Veterans | ',
+    'Community Support | Other\n',
+    '  Community Support = platform questions: login, zoom, replay, billing, navigation\n',
+    '  Other = does not fit any category above\n\n',
+    'Content type: ', c.content_type, '\n',
+    'Question: ', SUBSTR(c.body, 1, 1500)
+  ) AS prompt
 
-  WHERE q.is_question = TRUE
+FROM `bigtribebuilders.grant_helpdesk.grant_question_classifier` q
+JOIN `bigtribebuilders.grant_helpdesk.stg_grant_candidates` c
+  ON q.content_id = c.content_id
 
-  ${when(incremental(), `
-    AND q.content_id NOT IN (
-      SELECT content_id FROM ${self()}
-    )
-  `)}
-),
+WHERE q.is_question = TRUE
+  AND q.content_id NOT IN (
+    SELECT content_id
+    FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
+    WHERE difficulty IS NOT NULL
+  );
 
-classified AS (
+-- Step 2: run ML only on the materialised set, then merge results.
+MERGE `bigtribebuilders.grant_helpdesk.grant_ticket_labels` T
+USING (
   SELECT
     content_id,
-
-    AI.GENERATE_TEXT(
-      (
-        'You are a classifier for a grant and assistance helpdesk. '
-        'Analyse the question below and return a JSON object with exactly two keys.\n\n'
-
-        '"difficulty": one of ["easy", "intermediate", "advanced", "inappropriate"]\n'
-        '  - easy: simple factual question, clear answer exists\n'
-        '  - intermediate: requires some research or nuanced guidance\n'
-        '  - advanced: complex case, legal/financial/medical nuance, needs expert\n'
-        '  - inappropriate: offensive, spam, or completely off-topic\n\n'
-
-        '"domain": one of [\n'
-        '  "Pay Debt & Bills", "Home & Housing Help", "Cars & Car Repairs",\n'
-        '  "Healthcare Assistance", "Start A Business", "Launch A Nonprofit",\n'
-        '  "Boost Your Career", "Taxes Help Guidance", "Find Legal Help",\n'
-        '  "Family & Children", "Seniors & Disabilities", "Programs for Veterans",\n'
-        '  "Community Support", "Other"\n'
-        ']\n'
-        '  - Community Support: questions about the platform itself — login issues, '
-        'zoom links, replay access, membership billing, navigation, how to use the community\n'
-        '  - Other: does not fit any category above\n'
-        'Pick the single domain that best matches the question topic.\n\n'
-
-        'Content type: ', content_type, '\n'
-        'Question: ', SUBSTR(body, 1, 1500)
-      ),
-      endpoint      => 'gemini-2.5-flash',
-      connection_id => 'bigtribebuilders.eu.manychat',
-      model_params  => JSON '{
-        "generation_config": {
-          "response_mime_type": "application/json",
-          "response_schema": {
-            "type": "object",
-            "properties": {
-              "difficulty": {
-                "type": "string",
-                "enum": ["easy", "intermediate", "advanced", "inappropriate"]
-              },
-              "domain": {
-                "type": "string",
-                "enum": [
-                  "Pay Debt & Bills", "Home & Housing Help", "Cars & Car Repairs",
-                  "Healthcare Assistance", "Start A Business", "Launch A Nonprofit",
-                  "Boost Your Career", "Taxes Help Guidance", "Find Legal Help",
-                  "Family & Children", "Seniors & Disabilities", "Programs for Veterans",
-                  "Community Support", "Other"
-                ]
-              }
-            },
-            "required": ["difficulty", "domain"]
-          },
-          "thinking_config": {"thinking_budget": 0}
-        }
-      }'
-    ).result AS classification
-
-  FROM raw
-)
-
-SELECT
-  content_id,
-  JSON_VALUE(classification, '$.difficulty') AS difficulty,
-  JSON_VALUE(classification, '$.domain')     AS domain,
-  CURRENT_TIMESTAMP()                        AS labeled_at
-
-FROM classified
-WHERE classification IS NOT NULL
+    JSON_VALUE(result, '$.difficulty') AS difficulty,
+    JSON_VALUE(result, '$.domain')     AS domain,
+    CURRENT_TIMESTAMP()                AS labeled_at
+  FROM AI.GENERATE_TEXT(
+    MODEL `bigtribebuilders.grant_helpdesk.llm_model`,
+    (SELECT content_id, prompt FROM questions),
+    STRUCT(
+      0.0 AS temperature,
+      512 AS max_output_tokens
+    )
+  )
+  WHERE result IS NOT NULL
+    AND JSON_VALUE(result, '$.difficulty') IS NOT NULL
+) S
+ON T.content_id = S.content_id
+WHEN MATCHED THEN UPDATE SET
+  difficulty = S.difficulty,
+  domain     = S.domain,
+  labeled_at = S.labeled_at
+WHEN NOT MATCHED THEN INSERT
+  (content_id, difficulty, domain, labeled_at)
+VALUES
+  (S.content_id, S.difficulty, S.domain, S.labeled_at);
