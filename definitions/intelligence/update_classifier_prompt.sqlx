@@ -9,15 +9,14 @@ config {
 -- ─────────────────────────────────────────────────────────────────────────────
 -- How it works
 -- ─────────────────────────────────────────────────────────────────────────────
--- 1. feedback_check   — counts flags from the last 7 days (threshold: 5)
--- 2. current_prompt   — reads the latest version from grant_prompt_config
--- 3. recent_feedback  — assembles up to 30 flagged examples into a text block
--- 4. ai_result        — calls AI.GENERATE_TEXT (Gemini) via the existing
---                       remote connection. The WHERE fc.cnt >= 5 guard means
---                       Gemini is only called when there is enough signal.
--- 5. parsed           — extracts CHANGE_REASON and the new prompt text from
---                       Gemini's response using REGEXP functions.
--- 6. INSERT           — saves the new version only when:
+-- 1. prompt_input     — builds a single-row table with the full prompt text
+--                       for Gemini. Includes the gate: only produces a row
+--                       when feedback_count >= 5. Zero rows = no AI call.
+-- 2. ai_result        — passes TABLE prompt_input to AI.GENERATE_TEXT (TVF).
+--                       BigQuery passes each row's `prompt` column to Gemini
+--                       and returns all input columns + a `text` output column.
+-- 3. parsed           — extracts CHANGE_REASON and new prompt text from `text`.
+-- 4. INSERT           — saves the new version only when:
 --                         • Gemini did not say "No change"
 --                         • The new prompt text actually differs from the old one
 --                         • The response is long enough to be a real prompt (>50 chars)
@@ -30,14 +29,14 @@ INSERT INTO ${ref("grant_prompt_config")}
 
 WITH
 
-  -- Gate: only proceed if there is enough feedback this week
+  -- Count feedback from last 7 days
   feedback_check AS (
     SELECT COUNT(*) AS cnt
     FROM   ${ref("grant_classification_feedback")}
     WHERE  DATE(flagged_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   ),
 
-  -- Current prompt (latest version)
+  -- Latest prompt version
   current_prompt AS (
     SELECT prompt_text, version
     FROM   ${ref("grant_prompt_config")}
@@ -51,7 +50,7 @@ WITH
     FROM   ${ref("grant_prompt_config")}
   ),
 
-  -- Last 7 days of feedback, split by type, capped at 30 rows
+  -- False positives from last 7 days (classifier said TRUE, team says NO)
   false_positives AS (
     SELECT
       content_type,
@@ -64,6 +63,7 @@ WITH
     LIMIT  20
   ),
 
+  -- Confirmed questions from last 7 days (classifier was correct)
   confirmed_questions AS (
     SELECT
       content_type,
@@ -76,12 +76,10 @@ WITH
     LIMIT  10
   ),
 
-  -- Build a readable feedback block for the prompt
+  -- Assemble feedback into a readable block
   feedback_block AS (
     SELECT CONCAT(
-
-      -- False positives section
-      '## FALSE POSITIVES — posts the classifier got wrong\n',
+      '## FALSE POSITIVES\n',
       COALESCE(
         (SELECT STRING_AGG(
             CONCAT(
@@ -94,8 +92,7 @@ WITH
          FROM false_positives),
         '  (none this week)'
       ),
-
-      '\n\n## CONFIRMED QUESTIONS — posts the classifier correctly flagged\n',
+      '\n\n## CONFIRMED QUESTIONS\n',
       COALESCE(
         (SELECT STRING_AGG(
             CONCAT(
@@ -108,76 +105,70 @@ WITH
          FROM confirmed_questions),
         '  (none this week)'
       )
-
     ) AS examples
   ),
 
-  -- Call Gemini for a proposed prompt refinement
-  ai_result AS (
+  -- Build the single-row input table for AI.GENERATE_TEXT (TVF requires TABLE input).
+  -- The gate lives here: zero rows when feedback < 5 → no Gemini call → no INSERT.
+  prompt_input AS (
     SELECT
-      AI.GENERATE_TEXT(
-        CONCAT(
-          'You are a careful AI assistant helping improve a BigQuery classifier prompt ',
-          'for a community grant helpdesk.\n\n',
-
-          'BACKGROUND:\n',
-          'The classifier reads community member posts and returns TRUE when the post ',
-          'is a genuine question that needs a staff response, and FALSE otherwise. ',
-          'It runs on thousands of posts every week — accuracy matters a lot.\n\n',
-
-          'CURRENT PROMPT (version ', CAST(cp.version AS STRING), '):\n',
-          cp.prompt_text, '\n\n',
-
-          'THIS WEEKS TEAM FEEDBACK:\n',
-          fb.examples, '\n\n',
-
-          'YOUR TASK:\n',
-          'Propose a refined version of the prompt based on the feedback patterns above.\n\n',
-
-          'STRICT RULES:\n',
-          '1. Be CONSERVATIVE. Only change the prompt if at least 3 examples show the ',
-          '   SAME clear pattern.\n',
-          '2. Do NOT overfit to one-off edge cases.\n',
-          '3. Keep the overall structure, length, and tone of the current prompt.\n',
-          '4. Do NOT make the classifier more restrictive than necessary — missing a real ',
-          '   question is worse than a false positive.\n',
-          '5. If feedback is insufficient or inconsistent, return the prompt UNCHANGED.\n\n',
-
-          'OUTPUT FORMAT — exactly two parts, nothing else:\n',
-          'Line 1: "CHANGE_REASON: <one sentence explaining what changed and why>" ',
-          '        or "CHANGE_REASON: No change" if the prompt is unchanged.\n',
-          'Remaining lines: the complete prompt text (improved or identical).'
-        ),
-        endpoint      => 'gemini-2.5-flash',
-        connection_id => 'bigtribebuilders.eu.manychat',
-        model_params  => JSON '{"generation_config": {"thinking_config": {"thinking_budget": 0}}}'
-      ).text AS response,
-
+      -- `prompt` is the column AI.GENERATE_TEXT reads
+      CONCAT(
+        'You are a careful AI assistant helping improve a BigQuery classifier prompt ',
+        'for a community grant helpdesk.\n\n',
+        'BACKGROUND:\n',
+        'The classifier reads community member posts and returns TRUE when the post ',
+        'is a genuine question that needs a staff response, and FALSE otherwise. ',
+        'It runs on thousands of posts every week, so accuracy matters a lot.\n\n',
+        'CURRENT PROMPT (version ', CAST(cp.version AS STRING), '):\n',
+        cp.prompt_text, '\n\n',
+        'TEAM FEEDBACK FROM THE LAST 7 DAYS:\n',
+        fb.examples, '\n\n',
+        'YOUR TASK:\n',
+        'Propose a refined version of the prompt based on the feedback patterns above.\n\n',
+        'STRICT RULES:\n',
+        '1. Be CONSERVATIVE. Only change the prompt if at least 3 examples show the SAME clear pattern.\n',
+        '2. Do NOT overfit to one-off edge cases.\n',
+        '3. Keep the overall structure, length, and tone of the current prompt.\n',
+        '4. Do NOT make the classifier more restrictive than necessary.\n',
+        '5. If feedback is insufficient or inconsistent, return the prompt UNCHANGED.\n\n',
+        'OUTPUT FORMAT (two parts, nothing else):\n',
+        'Line 1: CHANGE_REASON: <one sentence> or CHANGE_REASON: No change\n',
+        'Remaining lines: the complete prompt text (improved or identical).'
+      ) AS prompt,
       cp.prompt_text AS old_prompt,
       cp.version     AS old_version
-
-    FROM current_prompt   cp
+    FROM current_prompt  cp
     CROSS JOIN feedback_block  fb
     CROSS JOIN feedback_check  fc
-    -- Gate: only call Gemini if there is enough feedback signal
-    WHERE fc.cnt >= 5
+    WHERE fc.cnt >= 5   -- gate: skip if not enough feedback signal
   ),
 
-  -- Parse Gemini's response into change_reason + new prompt text
+  -- AI.GENERATE_TEXT is a TVF — it takes TABLE input, returns input cols + `text`
+  ai_result AS (
+    SELECT
+      text       AS response,
+      old_prompt,
+      old_version
+    FROM AI.GENERATE_TEXT(
+      TABLE prompt_input,
+      endpoint      => 'gemini-2.5-flash',
+      connection_id => 'bigtribebuilders.eu.manychat',
+      model_params  => JSON '{"generation_config": {"thinking_config": {"thinking_budget": 0}}}'
+    )
+  ),
+
+  -- Parse CHANGE_REASON and new prompt out of Gemini response
   parsed AS (
     SELECT
-      TRIM(
-        REGEXP_EXTRACT(response, r'(?i)CHANGE_REASON:\s*(.*?)(?:\n|$)')
-      )                                                              AS change_reason,
-      TRIM(
-        REGEXP_REPLACE(response, r'(?i)^CHANGE_REASON:.*\n?', '')
-      )                                                              AS new_prompt,
+      TRIM(REGEXP_EXTRACT(response, r'(?i)CHANGE_REASON:\s*(.*?)(?:\n|$)')) AS change_reason,
+      TRIM(REGEXP_REPLACE(response, r'(?i)^CHANGE_REASON:.*\n?', ''))        AS new_prompt,
       old_prompt,
       old_version
     FROM ai_result
   ),
 
-  -- Attach the next version number
+  -- Attach next version number
   versioned AS (
     SELECT
       p.change_reason,
@@ -198,9 +189,6 @@ SELECT
 
 FROM versioned
 WHERE
-  -- Gemini must have found a pattern worth changing
   LOWER(TRIM(change_reason)) != 'no change'
-  -- The text must actually differ from the current prompt
   AND TRIM(new_prompt) != TRIM(old_prompt)
-  -- Guard against a garbled / empty response
   AND LENGTH(TRIM(new_prompt)) > 50
