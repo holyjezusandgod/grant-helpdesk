@@ -6,34 +6,35 @@ config {
   description: "Incremental LLM classification of all member content using AI.GENERATE_BOOL. Flags genuine grant-related questions. Already-classified rows are skipped on each run."
 }
 
+WITH prompt AS (
+  SELECT prompt_text
+  FROM ${ref("grant_prompt_config")}
+  ORDER BY version DESC
+  LIMIT 1
+)
+
 SELECT
-  content_id,
-  content_type,
+  c.content_id,
+  c.content_type,
 
   AI.GENERATE_BOOL(
-    (
-      'You are a classifier for a community helpdesk. Your job is to identify any content that needs a staff or community response. '
-      'Return TRUE if the content contains ANY of the following: '
-      'a question (direct or implied), a request for help or information, a tech issue (broken links, zoom problems, password issues, replay access), '
-      'a membership or billing question, a scheduling or event question, a request directed at a named person or moderator, '
-      'a complaint or frustration that implies something needs to be resolved, a new member introduction that warrants a welcome response, '
-      'or any other content where a reasonable community manager would feel they should reply. '
-      'Return FALSE ONLY for: pure social reactions (likes, congrats, emojis-only, short affirmations like "love this" or "thank you"), '
-      'general commentary with no ask, or announcements from staff with no question embedded. '
-      'When in doubt, return TRUE. '
-      'Content type: ', content_type, '. Text: ', SUBSTR(body, 1, 1500)
+    CONCAT(
+      p.prompt_text,
+      ' Content type: ', c.content_type,
+      '. Text: ', SUBSTR(c.body, 1, 1500)
     ),
-    endpoint     => 'gemini-2.5-flash',
+    endpoint      => 'gemini-2.5-flash',
     connection_id => 'bigtribebuilders.eu.manychat',
     model_params  => JSON '{"generation_config": {"thinking_config": {"thinking_budget": 0}}}'
   ).result                  AS is_question,
 
   CURRENT_TIMESTAMP()       AS classified_at
 
-FROM ${ref("stg_grant_candidates")}
+FROM ${ref("stg_grant_candidates")} c
+CROSS JOIN prompt p
 
 ${when(incremental(), `
-  WHERE content_id NOT IN (
+  WHERE c.content_id NOT IN (
     SELECT content_id FROM ${self()}
   )
 `)}

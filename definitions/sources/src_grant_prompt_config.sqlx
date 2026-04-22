@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "bigtribebuilders",
+  schema: "grant_helpdesk",
+  name: "grant_prompt_config",
+  description: "Versioned prompt history for the grant question classifier. Updated weekly by the AI prompt improvement pipeline."
+}

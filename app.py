@@ -45,9 +45,10 @@ with st.sidebar:
         return b
 
     # 1. Status
+    all_statuses = config.TICKET_STATUSES + config.FEEDBACK_STATUSES
     filter_status = filter_row("Status").selectbox(
-        "Status", ["All"] + config.TICKET_STATUSES,
-        format_func=lambda s: s if s == "All" else s.capitalize(),
+        "Status", ["All"] + all_statuses,
+        format_func=lambda s: s if s == "All" else s.replace("_", " ").title(),
         label_visibility="collapsed",
     )
 
@@ -180,16 +181,17 @@ def show_ticket_dialog(content_id: str):
 
     c1, c2 = st.columns(2)
     with c1:
+        all_statuses   = config.TICKET_STATUSES + config.FEEDBACK_STATUSES
         current_status = ticket.get("manual_status") or ticket.get("ticket_status") or "new"
-        if current_status not in config.TICKET_STATUSES:
+        if current_status not in all_statuses:
             current_status = "new"
         new_status = st.selectbox(
             "Status",
-            config.TICKET_STATUSES,
-            index=config.TICKET_STATUSES.index(current_status),
+            all_statuses,
+            index=all_statuses.index(current_status),
             disabled=not can_edit,
             key=f"status_{content_id}",
-            format_func=lambda s: f"{STATUS_ICON.get(s, '')} {s.capitalize()}",
+            format_func=lambda s: f"{STATUS_ICON.get(s, '')} {s.replace('_', ' ').title()}",
         )
     with c2:
         assignee_options    = ["— unassigned —"] + team_members
@@ -201,6 +203,17 @@ def show_ticket_dialog(content_id: str):
             assignee_options,
             index=assignee_options.index(current_assignee),
             key=f"assignee_{content_id}",
+        )
+
+    # Reason field — only shown for feedback statuses
+    feedback_reason = None
+    if new_status in config.FEEDBACK_STATUSES:
+        feedback_reason = st.text_area(
+            "Reason",
+            value=ticket.get("feedback_reason") or "",
+            placeholder="Explain why this is / is not a question — this trains the AI classifier.",
+            key=f"reason_{content_id}",
+            height=80,
         )
 
     c3, c4 = st.columns(2)
@@ -233,7 +246,8 @@ def show_ticket_dialog(content_id: str):
             difficulty_val = "" if new_difficulty == "— unset —"     else new_difficulty
             domain_val     = "" if new_domain     == "— unset —"     else new_domain
             bq_client.update_ticket_meta(
-                content_id, new_status, assignee_val, difficulty_val, domain_val
+                content_id, new_status, assignee_val, difficulty_val, domain_val,
+                feedback_reason=feedback_reason,
             )
             st.cache_data.clear()
             st.success("Saved.")
@@ -326,7 +340,7 @@ def show_ticket_dialog(content_id: str):
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
-tab_main, tab_reports = st.tabs(["Tickets", "Reports"])
+tab_main, tab_reports, tab_settings = st.tabs(["Tickets", "Reports", "Settings"])
 
 
 # ── MAIN TAB ──────────────────────────────────────────────────────────────────
@@ -462,3 +476,78 @@ with tab_reports:
 
     st.divider()
     st.button("📥 Export to Excel", disabled=True, help="Coming soon")
+
+
+# ── SETTINGS TAB ──────────────────────────────────────────────────────────────
+with tab_settings:
+    st.subheader("Classifier Prompt Settings")
+    st.caption(
+        "The AI classifier reads every community post and decides whether it "
+        "needs a staff response. The prompt below drives that decision. It is "
+        "updated automatically every week by the Dataform pipeline when enough "
+        "team feedback has been collected."
+    )
+
+    @st.cache_data(ttl=300)
+    def load_prompt_history():
+        return bq_client.get_prompt_history()
+
+    prompt_history = load_prompt_history()
+
+    if prompt_history.empty:
+        st.info("No prompt versions found in grant_prompt_config.")
+    else:
+        current = prompt_history[prompt_history["is_current"] == True]
+        past    = prompt_history[prompt_history["is_current"] == False]
+
+        # ── Current prompt ────────────────────────────────────────────────────
+        st.markdown("### Current Prompt")
+        if not current.empty:
+            row = current.iloc[0]
+            active_since = str(row["created_at"])[:10]
+
+            total   = int(row["total_classified"])
+            as_q    = int(row["classified_as_question"])
+            q_rate  = round(as_q / total * 100, 1) if total > 0 else 0
+            fp      = int(row["false_positives"])
+            cq      = int(row["confirmed_questions"])
+
+            s1, s2, s3, s4, s5 = st.columns(5)
+            s1.metric("Version",              f"v{int(row['version'])}")
+            s2.metric("Active Since",         active_since)
+            s3.metric("Posts Classified",     total)
+            s4.metric("Question Rate",        f"{q_rate}%")
+            s5.metric("Feedback This Period", f"{fp} FP · {cq} CQ",
+                      help="FP = false positives flagged by team · CQ = confirmed questions")
+
+            if row["change_reason"] and str(row["change_reason"]).strip():
+                st.info(f"**Last change:** {row['change_reason']}")
+
+            with st.expander("View full prompt text"):
+                st.code(row["prompt_text"], language=None)
+
+        st.divider()
+
+        # ── Prompt history ────────────────────────────────────────────────────
+        st.markdown("### Prompt History")
+        if past.empty:
+            st.caption("No previous versions — this is the first prompt.")
+        else:
+            for _, row in past.iterrows():
+                version_label = f"v{int(row['version'])}"
+                active_from   = str(row["created_at"])[:10]
+                active_to     = str(row["superseded_at"])[:10] if row["superseded_at"] else "—"
+                total         = int(row["total_classified"])
+                as_q          = int(row["classified_as_question"])
+                q_rate        = round(as_q / total * 100, 1) if total > 0 else 0
+                fp            = int(row["false_positives"])
+                cq            = int(row["confirmed_questions"])
+
+                with st.expander(
+                    f"{version_label} · Active {active_from} → {active_to} · "
+                    f"{total} classified · {q_rate}% questions · {fp} FP / {cq} CQ"
+                ):
+                    if row["change_reason"] and str(row["change_reason"]).strip():
+                        st.markdown(f"**Why it was replaced:** {row['change_reason']}")
+                        st.divider()
+                    st.code(row["prompt_text"], language=None)

@@ -1,0 +1,26 @@
+config {
+  type: "view",
+  name: "grant_classification_feedback",
+  description: "Weekly feedback on AI classifier accuracy. Combines not_a_question and confirmed_question flags with original content for prompt improvement."
+}
+
+SELECT
+  t.content_id,
+  t.status                                        AS feedback_type,
+  t.feedback_reason,
+  t.updated_at                                    AS flagged_at,
+  t.assigned_to                                   AS flagged_by,
+
+  gt.content_type,
+  gt.body,
+  gt.member_name,
+  gt.created_at                                   AS content_created_at,
+
+  DATE_TRUNC(t.updated_at, WEEK)                  AS feedback_week
+
+FROM `bigtribebuilders.grant_helpdesk.ticket_metadata` t
+INNER JOIN ${ref("grant_tickets")} gt
+  ON t.content_id = gt.content_id
+
+WHERE t.status IN ('not_a_question', 'confirmed_question')
+  AND t.feedback_reason IS NOT NULL

@@ -12,7 +12,12 @@ APP_VERSION  = "0.1"
 DAILY_GOAL   = 50
 
 TICKET_STATUSES    = ["new", "assigned", "closed", "cancelled"]
+FEEDBACK_STATUSES  = ["not_a_question", "confirmed_question"]
 DIFFICULTY_LEVELS  = ["easy", "intermediate", "advanced", "inappropriate"]
+
+PROMPT_CONFIG_TABLE     = f"{PROJECT_ID}.{DATASET}.grant_prompt_config"
+FEEDBACK_VIEW           = f"{PROJECT_ID}.{DATASET}.grant_classification_feedback"
+CLASSIFIER_TABLE        = f"{PROJECT_ID}.{DATASET}.grant_question_classifier"
 
 DOMAINS = [
     "Pay Debt & Bills",

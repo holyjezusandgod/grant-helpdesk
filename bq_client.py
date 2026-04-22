@@ -31,6 +31,9 @@ def get_tickets(
 
     if status and status != "All":
         filters.append(f"ticket_status = '{status}'")
+    else:
+        # Feedback statuses are hidden from the default view
+        filters.append(f"ticket_status NOT IN ('not_a_question', 'confirmed_question')")
     if assignee and assignee != "All":
         filters.append(f"assigned_to = '{assignee}'")
     if member_id:
@@ -125,10 +128,12 @@ def update_ticket_meta(
     assigned_to: str,
     difficulty: str = None,
     domain: str = None,
+    feedback_reason: str = None,
 ):
-    now = datetime.datetime.utcnow().isoformat()
-    difficulty_val = difficulty or ""
-    domain_val     = domain or ""
+    now             = datetime.datetime.utcnow().isoformat()
+    difficulty_val  = difficulty or ""
+    domain_val      = domain or ""
+    reason_val      = (feedback_reason or "").replace("'", "\\'")
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
@@ -138,21 +143,92 @@ def update_ticket_meta(
                 '{assigned_to}'    AS assigned_to,
                 '{difficulty_val}' AS difficulty,
                 '{domain_val}'     AS domain,
+                '{reason_val}'     AS feedback_reason,
                 TIMESTAMP '{now}'  AS updated_at
         ) S
         ON T.content_id = S.content_id
         WHEN MATCHED THEN UPDATE SET
-            status      = S.status,
-            assigned_to = S.assigned_to,
-            difficulty  = S.difficulty,
-            domain      = S.domain,
-            updated_at  = S.updated_at
+            status          = S.status,
+            assigned_to     = S.assigned_to,
+            difficulty      = S.difficulty,
+            domain          = S.domain,
+            feedback_reason = S.feedback_reason,
+            updated_at      = S.updated_at
         WHEN NOT MATCHED THEN INSERT
-            (content_id, status, assigned_to, difficulty, domain, updated_at)
+            (content_id, status, assigned_to, difficulty, domain, feedback_reason, updated_at)
         VALUES
-            (S.content_id, S.status, S.assigned_to, S.difficulty, S.domain, S.updated_at)
+            (S.content_id, S.status, S.assigned_to, S.difficulty, S.domain, S.feedback_reason, S.updated_at)
     """
     client.query(sql).result()
+
+
+def get_prompt_history() -> pd.DataFrame:
+    """
+    Returns all prompt versions with their classifier stats and feedback counts.
+    Each row covers the period from that version's created_at until the next
+    version's created_at (or NOW for the current version).
+    """
+    sql = f"""
+        WITH
+          versions AS (
+            SELECT
+              version,
+              prompt_text,
+              change_reason,
+              created_by,
+              created_at,
+              LEAD(created_at) OVER (ORDER BY version) AS superseded_at
+            FROM `{config.PROMPT_CONFIG_TABLE}`
+          ),
+          classifier_stats AS (
+            SELECT
+              v.version,
+              COUNT(*)                        AS total_classified,
+              COUNTIF(qc.is_question = TRUE)  AS classified_as_question
+            FROM versions v
+            LEFT JOIN `{config.CLASSIFIER_TABLE}` qc
+              ON  qc.classified_at >= v.created_at
+              AND (v.superseded_at IS NULL OR qc.classified_at < v.superseded_at)
+            GROUP BY v.version
+          ),
+          feedback_stats AS (
+            SELECT
+              v.version,
+              COUNTIF(f.feedback_type = 'not_a_question')     AS false_positives,
+              COUNTIF(f.feedback_type = 'confirmed_question')  AS confirmed_questions
+            FROM versions v
+            LEFT JOIN `{config.FEEDBACK_VIEW}` f
+              ON  f.flagged_at >= v.created_at
+              AND (v.superseded_at IS NULL OR f.flagged_at < v.superseded_at)
+            GROUP BY v.version
+          )
+        SELECT
+          v.version,
+          v.prompt_text,
+          v.change_reason,
+          v.created_at,
+          v.superseded_at,
+          (v.superseded_at IS NULL)                      AS is_current,
+          COALESCE(cs.total_classified,    0)            AS total_classified,
+          COALESCE(cs.classified_as_question, 0)         AS classified_as_question,
+          COALESCE(fs.false_positives,     0)            AS false_positives,
+          COALESCE(fs.confirmed_questions, 0)            AS confirmed_questions
+        FROM versions v
+        LEFT JOIN classifier_stats cs ON cs.version = v.version
+        LEFT JOIN feedback_stats   fs ON fs.version = v.version
+        ORDER BY v.version DESC
+    """
+    return client.query(sql).to_dataframe()
+
+
+def get_classification_feedback(date_from: str, date_to: str) -> pd.DataFrame:
+    sql = f"""
+        SELECT *
+        FROM `{config.FEEDBACK_VIEW}`
+        WHERE DATE(flagged_at) BETWEEN '{date_from}' AND '{date_to}'
+        ORDER BY flagged_at DESC
+    """
+    return client.query(sql).to_dataframe()
 
 
 def get_open_stats() -> dict:
