@@ -128,7 +128,7 @@ WITH
           'CURRENT PROMPT (version ', CAST(cp.version AS STRING), '):\n',
           cp.prompt_text, '\n\n',
 
-          'THIS WEEK''S TEAM FEEDBACK:\n',
+          'THIS WEEKS TEAM FEEDBACK:\n',
           fb.examples, '\n\n',
 
           'YOUR TASK:\n',
