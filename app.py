@@ -69,10 +69,12 @@ with st.sidebar:
     # 2. Date range
     date_range_option = st.radio(
         "Date Range",
-        ["Today", "This Week", "This Month", "Custom"],
+        ["All", "Today", "This Week", "This Month", "Custom"],
         horizontal=True,
     )
-    if date_range_option == "Today":
+    if date_range_option == "All":
+        date_from, date_to = None, None
+    elif date_range_option == "Today":
         date_from, date_to = today, today
     elif date_range_option == "This Week":
         date_from = today - datetime.timedelta(days=today.weekday())

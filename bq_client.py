@@ -102,7 +102,10 @@ def get_tickets(
                     ELSE 'open'
                 END                                                     AS ticket_status
             FROM `{config.TICKETS_TABLE}` gt
-            LEFT JOIN `{config.META_TABLE}` tm ON gt.content_id = tm.content_id
+            LEFT JOIN (
+                SELECT * FROM `{config.META_TABLE}`
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+            ) tm ON gt.content_id = tm.content_id
         )
         SELECT
             *,
@@ -145,7 +148,10 @@ def get_ticket_detail(content_id: str) -> dict:
                 ELSE 'critical'
             END AS urgency
         FROM `{config.TICKETS_TABLE}` gt
-        LEFT JOIN `{config.META_TABLE}` tm ON gt.content_id = tm.content_id
+        LEFT JOIN (
+            SELECT * FROM `{config.META_TABLE}`
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+        ) tm ON gt.content_id = tm.content_id
         WHERE gt.content_id = '{content_id}'
         LIMIT 1
     """
