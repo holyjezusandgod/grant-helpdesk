@@ -21,7 +21,7 @@ LOGS_TABLE               = f"{PROJECT_ID}.{DATASET}.app_logs"
 # Dataform repository — used to trigger table refreshes after assignments change.
 # DATAFORM_REGION: the GCP region your Dataform repo lives in (e.g. "europe-west4").
 # DATAFORM_REPOSITORY: the repository name as it appears in the Dataform UI.
-DATAFORM_REGION     = "europe-west4"
+DATAFORM_REGION     = "europe-west1"
 DATAFORM_REPOSITORY = "grant-helpdesk"
 
 PROMPT_CONFIG_TABLE     = f"{PROJECT_ID}.{DATASET}.grant_prompt_config"
