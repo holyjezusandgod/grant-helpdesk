@@ -11,7 +11,7 @@ APP_NAME     = "Lesko Help Desk"
 APP_VERSION  = "0.1"
 DAILY_GOAL   = 50
 
-TICKET_STATUSES    = ["new", "assigned", "closed", "cancelled"]
+TICKET_STATUSES    = ["open", "closed", "cancelled"]
 FEEDBACK_STATUSES  = ["not_a_question", "confirmed_question"]
 DIFFICULTY_LEVELS  = ["easy", "intermediate", "advanced", "inappropriate"]
 

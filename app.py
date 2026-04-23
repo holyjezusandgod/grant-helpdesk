@@ -22,10 +22,10 @@ button[data-testid="baseButton-primary"]:hover {
 """, unsafe_allow_html=True)
 
 STATUS_ICON = {
-    "new":       "🆕",
-    "assigned":  "🟡",
+    "open":      "🔵",
     "closed":    "🟢",
     "cancelled": "⛔",
+    "answered":  "✅",
 }
 URGENCY_ICON = {
     "normal":   "🟢",
@@ -134,8 +134,8 @@ with st.sidebar:
 def load_tickets(status, date_from, date_to, assignee, member_id, urgency, difficulty, domain):
     return bq_client.get_tickets(
         status=status,
-        date_from=str(date_from),
-        date_to=str(date_to),
+        date_from=str(date_from) if date_from else None,
+        date_to=str(date_to) if date_to else None,
         assignee=assignee,
         member_id=member_id or None,
         urgency=urgency,
