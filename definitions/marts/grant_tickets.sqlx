@@ -47,7 +47,7 @@ SELECT
   END                                  AS ticket_status,
 
   t.status                             AS manual_status,
-  t.assigned_to,
+  COALESCE(t.assigned_to, ma.assigned_to) AS assigned_to,
   t.updated_at                         AS ticket_updated_at,
 
   -- AI-derived labels; manual values in ticket_metadata take precedence
@@ -67,3 +67,6 @@ LEFT JOIN ${ref("ticket_metadata")} t
 
 LEFT JOIN ${ref("grant_ticket_labels")} ai
   ON c.content_id = ai.content_id
+
+LEFT JOIN ${ref("grant_member_assignments")} ma
+  ON c.member_id = ma.member_id

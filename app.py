@@ -6,6 +6,21 @@ import config
 
 st.set_page_config(page_title=config.APP_NAME, layout="wide")
 
+st.markdown("""
+<style>
+button[data-testid="baseButton-primary"] {
+    background-color: #0e1117 !important;
+    color: #ff8800 !important;
+    border: 1px solid #555 !important;
+}
+button[data-testid="baseButton-primary"]:hover {
+    border-color: #ff8800 !important;
+    color: #ff8800 !important;
+    background-color: #1a1a1a !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 STATUS_ICON = {
     "new":       "🆕",
     "assigned":  "🟡",
@@ -204,6 +219,16 @@ def show_ticket_dialog(content_id: str):
             key=f"assignee_{content_id}",
         )
 
+    # Override checkbox — only shown when an assignee is selected
+    override_assignment = False
+    if new_assignee != "— unassigned —" and can_edit:
+        override_assignment = st.checkbox(
+            f"Set as permanent helper for **{ticket.get('member_name', 'this member')}**",
+            value=False,
+            help="Overrides the automatic assignment rule — all future tickets from this member will go to this helper.",
+            key=f"override_{content_id}",
+        )
+
     # Reason field — only shown for feedback statuses
     feedback_reason = None
     if new_status in config.FEEDBACK_STATUSES:
@@ -248,8 +273,12 @@ def show_ticket_dialog(content_id: str):
                 content_id, new_status, assignee_val, difficulty_val, domain_val,
                 feedback_reason=feedback_reason,
             )
+            if override_assignment and assignee_val:
+                bq_client.set_member_assignment_override(
+                    ticket["member_id"], assignee_val, current_user
+                )
             st.cache_data.clear()
-            st.success("Saved.")
+            st.success("Saved." if not override_assignment else "Saved — permanent helper updated.")
             st.rerun()
     else:
         st.caption("⚠️ Ticket is closed — status locked.")
@@ -479,78 +508,70 @@ with tab_reports:
 
 # ── TRAIN AI TAB ──────────────────────────────────────────────────────────────
 with tab_train:
-    st.subheader("Train AI — Classifier Rejects")
-    st.caption(
-        "These are posts and articles the AI decided were **not** grant questions. "
-        "If you spot a mistake, open the ticket and set the status to "
-        "**Confirmed Question** — that feedback is used to improve the classifier."
-    )
+    st.subheader("Train AI")
 
-    st.divider()
+    # Load queue into session state once; a manual reload clears it
+    if "train_queue" not in st.session_state:
+        with st.spinner("Loading review queue…"):
+            q_df = bq_client.get_unreviewed_rejects()
+            st.session_state.train_queue = q_df.to_dict("records")
+            st.session_state.train_idx   = 0
 
-    # Filters
-    tf1, tf2, tf3 = st.columns(3)
-    with tf1:
-        train_date_from = st.date_input(
-            "From", value=today - datetime.timedelta(days=7), key="train_from"
-        )
-    with tf2:
-        train_date_to = st.date_input("To", value=today, key="train_to")
-    with tf3:
-        content_type_options = ["Posts & Articles", "Posts only", "Articles only", "All (incl. comments)"]
-        train_content_filter = st.selectbox("Content type", content_type_options, key="train_ct")
+    queue   = st.session_state.train_queue
+    idx     = st.session_state.train_idx
+    total   = len(queue)
+    remaining = total - idx
 
-    content_type_map = {
-        "Posts & Articles":       ["post", "article"],
-        "Posts only":             ["post"],
-        "Articles only":          ["article"],
-        "All (incl. comments)":   None,
-    }
-    allowed_types = content_type_map[train_content_filter]
-
-    @st.cache_data(ttl=60)
-    def load_rejects(date_from, date_to, allowed_types):
-        df = bq_client.get_tickets(
-            status="not_a_question",
-            date_from=str(date_from),
-            date_to=str(date_to),
-        )
-        if allowed_types and not df.empty and "content_type" in df.columns:
-            df = df[df["content_type"].isin(allowed_types)]
-        return df
-
-    rejects = load_rejects(train_date_from, train_date_to, tuple(allowed_types) if allowed_types else None)
-
-    st.markdown(f"**{len(rejects)} items** the classifier skipped in this period")
-
-    if rejects.empty:
-        st.info("No classifier rejects for this period and filter.")
+    if remaining <= 0:
+        st.success("All caught up — nothing left to review!")
+        if st.button("Reload queue"):
+            del st.session_state["train_queue"]
+            st.rerun()
     else:
-        rh0, rh1, rh2, rh3, rh4, rh5 = st.columns([1.4, 1.2, 1.0, 3.5, 0.5, 0.4])
-        for col, label in zip(
-            [rh0, rh1, rh2, rh3, rh4, rh5],
-            ["Timestamp", "Member", "Type", "Preview", "Link", ""],
-        ):
-            col.markdown(f"**{label}**")
+        # Progress bar
+        st.progress(idx / total if total > 0 else 1.0)
+        st.caption(f"{idx} reviewed · {remaining} remaining")
         st.divider()
 
-        for _, row in rejects.iterrows():
-            rc0, rc1, rc2, rc3, rc4, rc5 = st.columns([1.4, 1.2, 1.0, 3.5, 0.5, 0.4])
-            rc0.caption(str(row["created_at"])[:16])
-            rc1.caption(row.get("member_name") or "—")
-            rc2.caption((row.get("content_type") or "—").capitalize())
-            rc3.caption(str(row.get("body_preview") or "")[:140])
-            permalink = row.get("permalink") or ""
-            if permalink:
-                rc4.markdown(f"[🔗]({permalink})")
-            if rc5.button("→", key=f"train_open_{row['content_id']}"):
-                show_ticket_dialog(row["content_id"])
+        item = queue[idx]
 
-    st.divider()
-    st.caption(
-        "Marking a post as **Confirmed Question** inside the ticket dialog flags it as a "
-        "classifier false negative. The weekly Dataform pipeline collects these and updates the prompt."
-    )
+        # ── Engagement card ───────────────────────────────────────────────────
+        meta1, meta2, meta3 = st.columns(3)
+        meta1.markdown(f"**Member:** {item.get('member_name') or '—'}")
+        meta2.markdown(f"**Type:** {(item.get('content_type') or '—').capitalize()}")
+        meta3.markdown(f"**Posted:** {str(item.get('created_at', ''))[:16]}")
+
+        permalink = item.get("permalink") or ""
+        if permalink:
+            st.markdown(f"[View on MightyNetworks ↗]({permalink})")
+
+        st.divider()
+        with st.container(height=100):
+            st.markdown(item.get("body") or "_(no content)_")
+
+        st.divider()
+
+        # ── Decision buttons ──────────────────────────────────────────────────
+        btn_incorrect, btn_correct = st.columns(2)
+
+        if btn_incorrect.button(
+            "Incorrect — this IS a question",
+            use_container_width=True,
+            type="primary",
+            key=f"incorrect_{item['content_id']}",
+        ):
+            bq_client.update_ticket_meta(item["content_id"], "confirmed_question", "")
+            st.session_state.train_idx += 1
+            st.rerun()
+
+        if btn_correct.button(
+            "Correct — not a question",
+            use_container_width=True,
+            key=f"correct_{item['content_id']}",
+        ):
+            bq_client.update_ticket_meta(item["content_id"], "not_a_question", "")
+            st.session_state.train_idx += 1
+            st.rerun()
 
 
 # ── SETTINGS TAB ──────────────────────────────────────────────────────────────

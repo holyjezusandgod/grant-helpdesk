@@ -1,10 +1,39 @@
 import uuid
 import datetime
+import traceback
 import pandas as pd
 from google.cloud import bigquery
 import config
 
 client = bigquery.Client(project=config.PROJECT_ID)
+
+
+def log_event(level: str, source: str, message: str, detail: str = None):
+    """Streaming-insert a log row into app_logs. Never raises — logging must not break the caller."""
+    try:
+        row = [{
+            "log_id":     str(uuid.uuid4()),
+            "created_at": datetime.datetime.utcnow().isoformat(),
+            "level":      level,
+            "source":     source,
+            "message":    message,
+            "detail":     detail,
+        }]
+        client.insert_rows_json(config.LOGS_TABLE, row)
+    except Exception:
+        pass  # If BQ itself is down, nothing we can do here
+
+
+def get_unreviewed_rejects() -> pd.DataFrame:
+    """Posts/articles/comments the classifier rejected and the team hasn't reviewed yet."""
+    sql = f"""
+        SELECT *
+        FROM `{config.TICKETS_TABLE}`
+        WHERE ticket_status = 'not_a_question'
+          AND manual_status IS NULL
+        ORDER BY created_at DESC
+    """
+    return client.query(sql).to_dataframe()
 
 
 def get_team_members() -> list[str]:
@@ -160,6 +189,88 @@ def update_ticket_meta(
             (S.content_id, S.status, S.assigned_to, S.difficulty, S.domain, S.feedback_reason, S.updated_at)
     """
     client.query(sql).result()
+    if assigned_to:
+        trigger_assignment_refresh()
+
+
+def trigger_assignment_refresh():
+    """
+    Fire a Dataform workflow invocation to rebuild grant_member_assignments
+    and grant_tickets after an assignment changes. Fire-and-forget — Dataform
+    runs the rebuild asynchronously. Errors are swallowed so the save flow is
+    never broken.
+    """
+    try:
+        from google.cloud import dataform_v1beta1
+
+        df_client = dataform_v1beta1.DataformClient()
+        repo = (
+            f"projects/{config.PROJECT_ID}"
+            f"/locations/{config.DATAFORM_REGION}"
+            f"/repositories/{config.DATAFORM_REPOSITORY}"
+        )
+
+        # Use the most recent compilation result so we don't need to compile fresh.
+        results = list(df_client.list_compilation_results(parent=repo, page_size=1))
+        if not results:
+            return
+
+        invocation = dataform_v1beta1.WorkflowInvocation(
+            compilation_result=results[0].name,
+            invocation_config=dataform_v1beta1.InvocationConfig(
+                included_targets=[
+                    dataform_v1beta1.Target(
+                        project=config.PROJECT_ID,
+                        dataset=config.DATASET,
+                        name="grant_member_assignments",
+                    ),
+                    dataform_v1beta1.Target(
+                        project=config.PROJECT_ID,
+                        dataset=config.DATASET,
+                        name="grant_tickets",
+                    ),
+                ],
+                # Don't re-run upstream sources — ticket_metadata was just
+                # written by the app and grant_content is already materialized.
+                transitive_dependencies_included=False,
+                transitive_dependents_included=False,
+            ),
+        )
+        df_client.create_workflow_invocation(
+            parent=repo, workflow_invocation=invocation
+        )
+    except Exception as e:
+        log_event(
+            level="ERROR",
+            source="trigger_assignment_refresh",
+            message=str(e),
+            detail=traceback.format_exc(),
+        )
+
+
+def set_member_assignment_override(member_id: int, assigned_to: str, updated_by: str):
+    now = datetime.datetime.utcnow().isoformat()
+    sql = f"""
+        MERGE `{config.MEMBER_ASSIGNMENTS_TABLE}` T
+        USING (
+            SELECT
+                {member_id}        AS member_id,
+                '{assigned_to}'    AS assigned_to,
+                TIMESTAMP '{now}'  AS updated_at,
+                '{updated_by}'     AS updated_by
+        ) S
+        ON T.member_id = S.member_id
+        WHEN MATCHED THEN UPDATE SET
+            assigned_to = S.assigned_to,
+            updated_at  = S.updated_at,
+            updated_by  = S.updated_by
+        WHEN NOT MATCHED THEN INSERT
+            (member_id, assigned_to, updated_at, updated_by)
+        VALUES
+            (S.member_id, S.assigned_to, S.updated_at, S.updated_by)
+    """
+    client.query(sql).result()
+    trigger_assignment_refresh()
 
 
 def get_prompt_history() -> pd.DataFrame:

@@ -1,0 +1,39 @@
+config {
+  type: "table",
+  name: "grant_member_assignments",
+  tags: ["helpdesk"],
+  description: "Permanent member → helper coupling. Default is the helper from the member's first-ever assigned ticket. A UI override in member_assignment_overrides takes precedence."
+}
+
+WITH first_assignments AS (
+  SELECT
+    c.member_id,
+    t.assigned_to,
+    c.created_at  AS ticket_created_at,
+    c.content_id  AS first_content_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY c.member_id
+      ORDER BY c.created_at ASC
+    ) AS rn
+  FROM ${ref("ticket_metadata")} t
+  INNER JOIN ${ref("grant_content")} c
+    ON t.content_id = c.content_id
+  WHERE t.assigned_to IS NOT NULL
+    AND t.assigned_to != ''
+)
+
+SELECT
+  fa.member_id,
+  COALESCE(o.assigned_to, fa.assigned_to)  AS assigned_to,
+  fa.ticket_created_at                     AS first_assigned_at,
+  fa.first_content_id,
+  o.assigned_to IS NOT NULL                AS is_overridden,
+  o.updated_at                             AS override_updated_at,
+  o.updated_by                             AS override_updated_by
+
+FROM first_assignments fa
+
+LEFT JOIN ${ref("member_assignment_overrides")} o
+  ON fa.member_id = o.member_id
+
+WHERE fa.rn = 1

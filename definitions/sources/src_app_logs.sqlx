@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "bigtribebuilders",
+  schema: "grant_helpdesk",
+  name: "app_logs",
+  description: "App-written table: error and event logs from external service calls (Dataform, etc.). Written via streaming insert, never managed by Dataform."
+}
