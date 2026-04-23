@@ -10,7 +10,6 @@ config {
 -- Step 0: ensure the target table exists (required before MERGE).
 CREATE TABLE IF NOT EXISTS `bigtribebuilders.grant_helpdesk.grant_ticket_labels` (
   content_id   STRING NOT NULL,
-  difficulty   STRING,
   domain       STRING,
   labeled_at   TIMESTAMP
 );
@@ -23,12 +22,7 @@ SELECT
   CONCAT(
     'You are a classifier for a grant and assistance helpdesk. ',
     'Respond with ONLY a valid JSON object — no explanation, no markdown, no extra text.\n\n',
-    'Return exactly: {"difficulty": "...", "domain": "..."}\n\n',
-    'difficulty must be one of: easy, intermediate, advanced, inappropriate\n',
-    '  easy = simple factual question with a clear answer\n',
-    '  intermediate = requires research or nuanced guidance\n',
-    '  advanced = complex legal, financial, or medical nuance\n',
-    '  inappropriate = offensive, spam, or completely off-topic\n\n',
+    'Return exactly: {"domain": "..."}\n\n',
     'domain must be exactly one of these strings:\n',
     '  Pay Debt & Bills | Home & Housing Help | Cars & Car Repairs | ',
     'Healthcare Assistance | Start A Business | Launch A Nonprofit | ',
@@ -49,7 +43,7 @@ WHERE q.is_question = TRUE
   AND q.content_id NOT IN (
     SELECT content_id
     FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
-    WHERE difficulty IS NOT NULL
+    WHERE domain IS NOT NULL
   );
 
 -- Step 2: run ML only on the materialised set, then merge results.
@@ -57,9 +51,8 @@ MERGE `bigtribebuilders.grant_helpdesk.grant_ticket_labels` T
 USING (
   SELECT
     content_id,
-    JSON_VALUE(result, '$.difficulty') AS difficulty,
-    JSON_VALUE(result, '$.domain')     AS domain,
-    CURRENT_TIMESTAMP()                AS labeled_at
+    JSON_VALUE(result, '$.domain')  AS domain,
+    CURRENT_TIMESTAMP()             AS labeled_at
   FROM AI.GENERATE_TEXT(
     MODEL `bigtribebuilders.grant_helpdesk.llm_model`,
     (SELECT content_id, prompt FROM questions),
@@ -69,14 +62,13 @@ USING (
     )
   )
   WHERE result IS NOT NULL
-    AND JSON_VALUE(result, '$.difficulty') IS NOT NULL
+    AND JSON_VALUE(result, '$.domain') IS NOT NULL
 ) S
 ON T.content_id = S.content_id
 WHEN MATCHED THEN UPDATE SET
-  difficulty = S.difficulty,
   domain     = S.domain,
   labeled_at = S.labeled_at
 WHEN NOT MATCHED THEN INSERT
-  (content_id, difficulty, domain, labeled_at)
+  (content_id, domain, labeled_at)
 VALUES
-  (S.content_id, S.difficulty, S.domain, S.labeled_at);
+  (S.content_id, S.domain, S.labeled_at);

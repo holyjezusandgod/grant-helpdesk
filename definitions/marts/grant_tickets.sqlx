@@ -50,9 +50,8 @@ SELECT
   COALESCE(t.assigned_to, ma.assigned_to) AS assigned_to,
   t.updated_at                         AS ticket_updated_at,
 
-  -- AI-derived labels; manual values in ticket_metadata take precedence
-  COALESCE(t.difficulty, ai.difficulty) AS difficulty,
-  COALESCE(t.domain,     ai.domain)     AS domain
+  -- AI-derived domain label; manual value in ticket_metadata takes precedence
+  COALESCE(t.domain, ai.domain) AS domain
 
 FROM ${ref("grant_content")} c
 

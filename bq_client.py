@@ -53,7 +53,7 @@ def get_tickets(
     assignee=None,
     member_id=None,
     urgency=None,
-    difficulty=None,
+
     domain=None,
 ) -> pd.DataFrame:
     filters = []
@@ -67,8 +67,7 @@ def get_tickets(
         filters.append(f"assigned_to = '{assignee}'")
     if member_id:
         filters.append(f"CAST(member_id AS STRING) = '{member_id}'")
-    if difficulty and difficulty != "All":
-        filters.append(f"LOWER(difficulty) = '{difficulty.lower()}'")
+
     if domain and domain != "All":
         filters.append(f"domain = '{domain}'")
     if date_from:
@@ -93,7 +92,6 @@ def get_tickets(
                 gt.* EXCEPT(assigned_to, manual_status, difficulty, domain, ticket_status),
                 COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
                 tm.status                                               AS manual_status,
-                COALESCE(tm.difficulty, gt.difficulty)                  AS difficulty,
                 COALESCE(tm.domain, gt.domain)                          AS domain,
                 CASE
                     WHEN gt.team_commented OR gt.team_reacted           THEN 'answered'
@@ -120,11 +118,8 @@ def get_tickets(
         ORDER BY created_at DESC
     """
     df = client.query(sql).to_dataframe()
-    # difficulty and domain columns are added by migration 001 + Dataform redeploy;
-    # fall back to None until that's done so the app doesn't crash
-    for col in ("difficulty", "domain"):
-        if col not in df.columns:
-            df[col] = None
+    if "domain" not in df.columns:
+        df["domain"] = None
     return df
 
 
@@ -189,14 +184,12 @@ def update_ticket_meta(
     content_id: str,
     status: str,
     assigned_to: str,
-    difficulty: str = None,
     domain: str = None,
     feedback_reason: str = None,
 ):
-    now             = datetime.datetime.utcnow().isoformat()
-    difficulty_val  = difficulty or ""
-    domain_val      = domain or ""
-    reason_val      = (feedback_reason or "").replace("'", "\\'")
+    now        = datetime.datetime.utcnow().isoformat()
+    domain_val = domain or ""
+    reason_val = (feedback_reason or "").replace("'", "\\'")
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
@@ -204,7 +197,6 @@ def update_ticket_meta(
                 '{content_id}'     AS content_id,
                 '{status}'         AS status,
                 '{assigned_to}'    AS assigned_to,
-                '{difficulty_val}' AS difficulty,
                 '{domain_val}'     AS domain,
                 '{reason_val}'     AS feedback_reason,
                 TIMESTAMP '{now}'  AS updated_at
@@ -213,14 +205,13 @@ def update_ticket_meta(
         WHEN MATCHED THEN UPDATE SET
             status          = S.status,
             assigned_to     = S.assigned_to,
-            difficulty      = S.difficulty,
             domain          = S.domain,
             feedback_reason = S.feedback_reason,
             updated_at      = S.updated_at
         WHEN NOT MATCHED THEN INSERT
-            (content_id, status, assigned_to, difficulty, domain, feedback_reason, updated_at)
+            (content_id, status, assigned_to, domain, feedback_reason, updated_at)
         VALUES
-            (S.content_id, S.status, S.assigned_to, S.difficulty, S.domain, S.feedback_reason, S.updated_at)
+            (S.content_id, S.status, S.assigned_to, S.domain, S.feedback_reason, S.updated_at)
     """
     client.query(sql).result()
     if assigned_to:

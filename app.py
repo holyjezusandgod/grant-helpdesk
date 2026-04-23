@@ -111,14 +111,7 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-    # 6. Difficulty
-    filter_difficulty = filter_row("Difficulty").selectbox(
-        "Difficulty",
-        ["All"] + [d.capitalize() for d in config.DIFFICULTY_LEVELS],
-        label_visibility="collapsed",
-    )
-
-    # 7. Domain
+    # 6. Domain
     filter_domain = filter_row("Domain").selectbox(
         "Domain", ["All"] + config.DOMAINS,
         label_visibility="collapsed",
@@ -131,7 +124,7 @@ with st.sidebar:
 
 # ── Data loaders ───────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60)
-def load_tickets(status, date_from, date_to, assignee, member_id, urgency, difficulty, domain):
+def load_tickets(status, date_from, date_to, assignee, member_id, urgency, domain):
     return bq_client.get_tickets(
         status=status,
         date_from=str(date_from) if date_from else None,
@@ -139,7 +132,6 @@ def load_tickets(status, date_from, date_to, assignee, member_id, urgency, diffi
         assignee=assignee,
         member_id=member_id or None,
         urgency=urgency,
-        difficulty=difficulty,
         domain=domain,
     )
 
@@ -244,17 +236,6 @@ def show_ticket_dialog(content_id: str):
 
     c3, c4 = st.columns(2)
     with c3:
-        diff_options    = ["— unset —"] + config.DIFFICULTY_LEVELS
-        current_diff    = ticket.get("difficulty") or "— unset —"
-        if current_diff not in diff_options:
-            current_diff = "— unset —"
-        new_difficulty = st.selectbox(
-            "Difficulty",
-            diff_options,
-            index=diff_options.index(current_diff),
-            key=f"diff_{content_id}",
-        )
-    with c4:
         domain_options  = ["— unset —"] + config.DOMAINS
         current_domain  = ticket.get("domain") or "— unset —"
         if current_domain not in domain_options:
@@ -268,11 +249,10 @@ def show_ticket_dialog(content_id: str):
 
     if can_edit:
         if st.button("💾 Save changes", key=f"save_{content_id}"):
-            assignee_val   = "" if new_assignee  == "— unassigned —" else new_assignee
-            difficulty_val = "" if new_difficulty == "— unset —"     else new_difficulty
-            domain_val     = "" if new_domain     == "— unset —"     else new_domain
+            assignee_val = "" if new_assignee == "— unassigned —" else new_assignee
+            domain_val   = "" if new_domain   == "— unset —"      else new_domain
             bq_client.update_ticket_meta(
-                content_id, new_status, assignee_val, difficulty_val, domain_val,
+                content_id, new_status, assignee_val, domain_val,
                 feedback_reason=feedback_reason,
             )
             if override_assignment and assignee_val:
@@ -378,7 +358,7 @@ with tab_main:
     tickets     = load_tickets(
         filter_status, date_from, date_to,
         filter_assignee, filter_member_id,
-        filter_urgency, filter_difficulty, filter_domain,
+        filter_urgency, filter_domain,
     )
     open_stats  = load_open_stats()
     daily_stats = load_daily_stats()
@@ -408,11 +388,10 @@ with tab_main:
         st.info("No tickets match the current filters.")
     else:
         # Table header
-        h0, h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.1, 1.2, 0.5, 0.4])
+        h0, h1, h2, h3, h4, h5, h6, h7 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.2, 0.5, 0.4])
         for col, label in zip(
-            [h0, h1, h2, h3, h4, h5, h6, h7, h8],
-            ["Timestamp", "Member", "Question", "Assigned To",
-             "Difficulty", "Urgency", "Status", "Link", ""],
+            [h0, h1, h2, h3, h4, h5, h6, h7],
+            ["Timestamp", "Member", "Question", "Assigned To", "Urgency", "Status", "Link", ""],
         ):
             col.markdown(f"**{label}**")
 
@@ -425,7 +404,7 @@ with tab_main:
             st.cache_data.clear()
 
         for _, row in tickets.iterrows():
-            c0, c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.1, 1.2, 0.5, 0.4])
+            c0, c1, c2, c3, c4, c5, c6, c7 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.2, 0.5, 0.4])
 
             c0.caption(str(row["created_at"])[:16])
 
@@ -454,15 +433,14 @@ with tab_main:
                 on_change=_save_quick_assignee,
                 args=(row["content_id"],),
             )
-            c4.caption((row["difficulty"] or "—").capitalize())
-            c5.caption(f"{URGENCY_ICON.get(row['urgency'], '⚪')} {(row['urgency'] or '').capitalize()}")
-            c6.caption(f"{STATUS_ICON.get(row['ticket_status'], '⚪')} {(row['ticket_status'] or '').capitalize()}")
+            c4.caption(f"{URGENCY_ICON.get(row['urgency'], '⚪')} {(row['urgency'] or '').capitalize()}")
+            c5.caption(f"{STATUS_ICON.get(row['ticket_status'], '⚪')} {(row['ticket_status'] or '').capitalize()}")
 
             permalink = row.get("permalink") or ""
             if permalink:
-                c7.markdown(f"[🔗]({permalink})")
+                c6.markdown(f"[🔗]({permalink})")
 
-            if c8.button("→", key=f"open_{row['content_id']}"):
+            if c7.button("→", key=f"open_{row['content_id']}"):
                 show_ticket_dialog(row["content_id"])
 
 

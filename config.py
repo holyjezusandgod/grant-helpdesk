@@ -13,7 +13,6 @@ DAILY_GOAL   = 50
 
 TICKET_STATUSES    = ["open", "closed", "cancelled"]
 FEEDBACK_STATUSES  = ["not_a_question", "confirmed_question"]
-DIFFICULTY_LEVELS  = ["easy", "intermediate", "advanced", "inappropriate"]
 
 MEMBER_ASSIGNMENTS_TABLE = f"{PROJECT_ID}.{DATASET}.member_assignment_overrides"
 LOGS_TABLE               = f"{PROJECT_ID}.{DATASET}.app_logs"
