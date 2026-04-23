@@ -416,6 +416,18 @@ with tab_main:
 
         st.divider()
 
+        def _save_quick_assignee(content_id, manual_status, difficulty, domain):
+            new_val = st.session_state[f"quick_assignee_{content_id}"]
+            assignee_val = "" if new_val == "— unassigned —" else new_val
+            bq_client.update_ticket_meta(
+                content_id,
+                manual_status or "",
+                assignee_val,
+                difficulty or "",
+                domain or "",
+            )
+            st.cache_data.clear()
+
         for _, row in tickets.iterrows():
             c0, c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.1, 1.2, 0.5, 0.4])
 
@@ -431,7 +443,26 @@ with tab_main:
                 st.rerun()
 
             c2.caption(str(row["body_preview"] or "")[:120])
-            c3.caption(row["assigned_to"] or "—")
+
+            # Assignee dropdown — saves on change without opening the ticket dialog
+            _assignee_opts = ["— unassigned —"] + team_members
+            _current_assignee = row.get("assigned_to") or "— unassigned —"
+            if _current_assignee not in _assignee_opts:
+                _current_assignee = "— unassigned —"
+            c3.selectbox(
+                "Assigned To",
+                _assignee_opts,
+                index=_assignee_opts.index(_current_assignee),
+                key=f"quick_assignee_{row['content_id']}",
+                label_visibility="collapsed",
+                on_change=_save_quick_assignee,
+                args=(
+                    row["content_id"],
+                    row.get("manual_status"),
+                    row.get("difficulty"),
+                    row.get("domain"),
+                ),
+            )
             c4.caption((row["difficulty"] or "—").capitalize())
             c5.caption(f"{URGENCY_ICON.get(row['urgency'], '⚪')} {(row['urgency'] or '').capitalize()}")
             c6.caption(f"{STATUS_ICON.get(row['ticket_status'], '⚪')} {(row['ticket_status'] or '').capitalize()}")
