@@ -30,21 +30,24 @@ SELECT
   m.member_permalink,
 
   -- team engagement signals (failsafe)
-  COALESCE(te.team_commented, FALSE)   AS team_commented,
-  COALESCE(te.team_reacted,   FALSE)   AS team_reacted,
+  COALESCE(te.team_commented,        FALSE) AS team_commented,
+  COALESCE(te.team_comment_replied,  FALSE) AS team_comment_replied,
+  COALESCE(te.team_reacted,          FALSE) AS team_reacted,
   te.first_engagement_at,
 
   -- final ticket status:
-  -- (1) team engaged (commented or reacted) → answered, cannot be overridden
+  -- (1) team commented on post, replied to comment, or reacted → answered, cannot be overridden
   -- (2) manual status set in Streamlit → use it
   -- (3) classifier rejected → not_a_question
   -- (4) nothing → open
   CASE
-    WHEN te.team_commented = TRUE OR te.team_reacted = TRUE     THEN 'answered'
-    WHEN t.status IS NOT NULL                                   THEN t.status
-    WHEN c.is_question = FALSE                                  THEN 'not_a_question'
-    ELSE                                                             'open'
-  END                                  AS ticket_status,
+    WHEN te.team_commented       = TRUE
+      OR te.team_comment_replied = TRUE
+      OR te.team_reacted         = TRUE   THEN 'answered'
+    WHEN t.status IS NOT NULL             THEN t.status
+    WHEN c.is_question = FALSE            THEN 'not_a_question'
+    ELSE                                       'open'
+  END                                     AS ticket_status,
 
   t.status                             AS manual_status,
   COALESCE(t.assigned_to, ma.assigned_to) AS assigned_to,

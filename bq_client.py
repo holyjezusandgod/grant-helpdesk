@@ -94,7 +94,7 @@ def get_tickets(
                 tm.status                                               AS manual_status,
                 COALESCE(tm.domain, gt.domain)                          AS domain,
                 CASE
-                    WHEN gt.team_commented OR gt.team_reacted           THEN 'answered'
+                    WHEN gt.team_commented OR gt.team_comment_replied OR gt.team_reacted THEN 'answered'
                     WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                     WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
                     ELSE 'open'
