@@ -88,6 +88,22 @@ def get_tickets(
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
 
     sql = f"""
+        WITH live AS (
+            SELECT
+                gt.* EXCEPT(assigned_to, manual_status, difficulty, domain, ticket_status),
+                COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
+                tm.status                                               AS manual_status,
+                COALESCE(tm.difficulty, gt.difficulty)                  AS difficulty,
+                COALESCE(tm.domain, gt.domain)                          AS domain,
+                CASE
+                    WHEN gt.team_commented OR gt.team_reacted           THEN 'answered'
+                    WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
+                    WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
+                    ELSE 'open'
+                END                                                     AS ticket_status
+            FROM `{config.TICKETS_TABLE}` gt
+            LEFT JOIN `{config.META_TABLE}` tm ON gt.content_id = tm.content_id
+        )
         SELECT
             *,
             LEFT(body, 120) AS body_preview,
@@ -96,7 +112,7 @@ def get_tickets(
                 WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 48 THEN 'urgent'
                 ELSE 'critical'
             END AS urgency
-        FROM `{config.TICKETS_TABLE}`
+        FROM live
         {where}
         ORDER BY created_at DESC
     """
@@ -111,14 +127,26 @@ def get_tickets(
 
 def get_ticket_detail(content_id: str) -> dict:
     sql = f"""
-        SELECT *,
+        SELECT
+            gt.* EXCEPT(assigned_to, manual_status, difficulty, domain, ticket_status),
+            COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
+            tm.status                                               AS manual_status,
+            COALESCE(tm.difficulty, gt.difficulty)                  AS difficulty,
+            COALESCE(tm.domain, gt.domain)                          AS domain,
             CASE
-                WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24 THEN 'normal'
-                WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 48 THEN 'urgent'
+                WHEN gt.team_commented OR gt.team_reacted           THEN 'answered'
+                WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
+                WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
+                ELSE 'open'
+            END                                                     AS ticket_status,
+            CASE
+                WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
+                WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 48 THEN 'urgent'
                 ELSE 'critical'
             END AS urgency
-        FROM `{config.TICKETS_TABLE}`
-        WHERE content_id = '{content_id}'
+        FROM `{config.TICKETS_TABLE}` gt
+        LEFT JOIN `{config.META_TABLE}` tm ON gt.content_id = tm.content_id
+        WHERE gt.content_id = '{content_id}'
         LIMIT 1
     """
     df = client.query(sql).to_dataframe()
