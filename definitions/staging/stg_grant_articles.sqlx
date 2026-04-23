@@ -9,6 +9,7 @@ config {
 
 SELECT
   CONCAT('article_', CAST(article_id AS STRING))  AS content_id,
+  CONCAT('article_', CAST(article_id AS STRING))  AS thread_id,
   'article'                                         AS content_type,
   creator_id                                        AS member_id,
   space_id,

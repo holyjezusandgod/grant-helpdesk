@@ -430,6 +430,81 @@ def get_daily_stats() -> dict:
     return result
 
 
+def get_thread(thread_id: str) -> pd.DataFrame:
+    """
+    Fetch every item in a thread — root post + all comments — ordered by time.
+    thread_id is always 'post_NNN'. Returns author_type ('team'/'member') and
+    depth so the UI can render the conversation correctly.
+    """
+    post_id = thread_id.replace("post_", "")
+    sql = f"""
+        WITH root_post AS (
+            SELECT
+                CONCAT('post_', CAST(p.post_id AS STRING))   AS content_id,
+                'post'                                         AS content_type,
+                0                                              AS depth,
+                CAST(NULL AS INT64)                            AS reply_to_id,
+                p.creator_id                                   AS author_id,
+                TRIM(CONCAT(
+                    COALESCE(m.first_name, ''), ' ',
+                    COALESCE(m.last_name,  '')
+                ))                                             AS author_name,
+                CASE
+                    WHEN m.network_role IN ('host', 'moderator') THEN 'team'
+                    ELSE 'member'
+                END                                            AS author_type,
+                TRIM(REGEXP_REPLACE(
+                    REGEXP_REPLACE(COALESCE(p.description, ''), r'<[^>]+>', ' '),
+                    r'\\s+', ' '
+                ))                                             AS body,
+                p.permalink,
+                p.created_at
+            FROM `bigtribebuilders.dataform.core_posts` p
+            LEFT JOIN `bigtribebuilders.dataform.core_members` m
+                ON  p.creator_id = m.member_id
+                AND m.client_id  = 'lesko_4022250'
+            WHERE p.client_id = 'lesko_4022250'
+              AND p.post_id   = {post_id}
+        ),
+
+        all_comments AS (
+            SELECT
+                CONCAT('comment_', CAST(c.comment_id AS STRING)) AS content_id,
+                'comment'                                          AS content_type,
+                c.depth,
+                c.reply_to_id,
+                c.author_id,
+                TRIM(CONCAT(
+                    COALESCE(m.first_name, ''), ' ',
+                    COALESCE(m.last_name,  '')
+                ))                                                 AS author_name,
+                CASE
+                    WHEN m.network_role IN ('host', 'moderator') THEN 'team'
+                    ELSE 'member'
+                END                                                AS author_type,
+                TRIM(REGEXP_REPLACE(
+                    REGEXP_REPLACE(COALESCE(c.comment_text, ''), r'<[^>]+>', ' '),
+                    r'\\s+', ' '
+                ))                                                 AS body,
+                c.permalink,
+                c.created_at
+            FROM `bigtribebuilders.dataform.core_comments` c
+            LEFT JOIN `bigtribebuilders.dataform.core_members` m
+                ON  c.author_id = m.member_id
+                AND m.client_id = 'lesko_4022250'
+            WHERE c.client_id      = 'lesko_4022250'
+              AND c.targetable_id  = {post_id}
+              AND c.comment_status = 'active'
+        )
+
+        SELECT * FROM root_post
+        UNION ALL
+        SELECT * FROM all_comments
+        ORDER BY created_at ASC, depth ASC
+    """
+    return client.query(sql).to_dataframe()
+
+
 def get_member_history(member_id: int, exclude_content_id: str = None) -> pd.DataFrame:
     exclude = f"AND content_id != '{exclude_content_id}'" if exclude_content_id else ""
     sql = f"""

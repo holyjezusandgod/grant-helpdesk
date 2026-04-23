@@ -7,6 +7,7 @@ config {
 
 SELECT
   c.content_id,
+  c.thread_id,
   c.content_type,
   c.space_id,
   c.title,

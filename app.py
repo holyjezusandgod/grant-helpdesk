@@ -175,11 +175,25 @@ def show_ticket_dialog(content_id: str):
 
     st.divider()
 
-    # Full question
-    st.markdown("**Question**")
-    with st.container(height=200):
-        st.markdown(ticket.get("body", ""))
-    st.markdown(f"[View on MightyNetworks ↗]({ticket.get('permalink', '')})")
+    # Full thread
+    thread_id = ticket.get("thread_id") or content_id
+    st.markdown("**Thread**")
+    with st.spinner("Loading thread…"):
+        thread = bq_client.get_thread(thread_id)
+
+    with st.container(height=380):
+        for _, item in thread.iterrows():
+            is_current = item["content_id"] == content_id
+            role = "assistant" if item["author_type"] == "team" else "user"
+            indent = "　" * (int(item["depth"]) - 1) if int(item["depth"]) > 1 else ""
+            with st.chat_message(role):
+                label = f"{indent}**{item['author_name']}** · {str(item['created_at'])[:16]}"
+                if is_current:
+                    label += " 📌 *this ticket*"
+                st.markdown(label)
+                st.markdown(item["body"] or "_(empty)_")
+                if item.get("permalink"):
+                    st.markdown(f"[↗ View]({item['permalink']})")
 
     st.divider()
 

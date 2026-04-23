@@ -8,9 +8,10 @@ config {
 }
 
 SELECT
-  CONCAT('comment_', CAST(comment_id AS STRING))    AS content_id,
-  'comment'                                          AS content_type,
-  author_id                                          AS member_id,
+  CONCAT('comment_', CAST(comment_id AS STRING))       AS content_id,
+  CONCAT('post_',    CAST(targetable_id AS STRING))    AS thread_id,
+  'comment'                                             AS content_type,
+  author_id                                             AS member_id,
   space_id,
   CAST(NULL AS STRING)                               AS title,
   TRIM(REGEXP_REPLACE(
