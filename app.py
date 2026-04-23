@@ -416,16 +416,10 @@ with tab_main:
 
         st.divider()
 
-        def _save_quick_assignee(content_id, manual_status, difficulty, domain):
+        def _save_quick_assignee(content_id):
             new_val = st.session_state[f"quick_assignee_{content_id}"]
             assignee_val = "" if new_val == "— unassigned —" else new_val
-            bq_client.update_ticket_meta(
-                content_id,
-                manual_status or "",
-                assignee_val,
-                difficulty or "",
-                domain or "",
-            )
+            bq_client.set_ticket_assignee(content_id, assignee_val)
             st.cache_data.clear()
 
         for _, row in tickets.iterrows():
@@ -456,12 +450,7 @@ with tab_main:
                 key=f"quick_assignee_{row['content_id']}",
                 label_visibility="collapsed",
                 on_change=_save_quick_assignee,
-                args=(
-                    row["content_id"],
-                    row.get("manual_status"),
-                    row.get("difficulty"),
-                    row.get("domain"),
-                ),
+                args=(row["content_id"],),
             )
             c4.caption((row["difficulty"] or "—").capitalize())
             c5.caption(f"{URGENCY_ICON.get(row['urgency'], '⚪')} {(row['urgency'] or '').capitalize()}")

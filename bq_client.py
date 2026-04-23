@@ -248,6 +248,30 @@ def trigger_assignment_refresh():
         )
 
 
+def set_ticket_assignee(content_id: str, assigned_to: str):
+    """Update only the assigned_to field on a ticket without touching any other metadata."""
+    now = datetime.datetime.utcnow().isoformat()
+    sql = f"""
+        MERGE `{config.META_TABLE}` T
+        USING (
+            SELECT
+                '{content_id}'    AS content_id,
+                '{assigned_to}'   AS assigned_to,
+                TIMESTAMP '{now}' AS updated_at
+        ) S
+        ON T.content_id = S.content_id
+        WHEN MATCHED THEN UPDATE SET
+            assigned_to = S.assigned_to,
+            updated_at  = S.updated_at
+        WHEN NOT MATCHED THEN INSERT
+            (content_id, assigned_to, updated_at)
+        VALUES
+            (S.content_id, S.assigned_to, S.updated_at)
+    """
+    client.query(sql).result()
+    trigger_assignment_refresh()
+
+
 def set_member_assignment_override(member_id: int, assigned_to: str, updated_by: str):
     now = datetime.datetime.utcnow().isoformat()
     sql = f"""
