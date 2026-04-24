@@ -5,7 +5,19 @@ import pandas as pd
 from google.cloud import bigquery
 import config
 
-client = bigquery.Client(project=config.PROJECT_ID)
+try:
+    client = bigquery.Client(project=config.PROJECT_ID)
+except Exception as _e:
+    import sys
+    print(
+        "\n❌ Google Cloud credentials not found.\n"
+        "Run the following commands and restart the app:\n\n"
+        "    gcloud auth login\n"
+        "    gcloud auth application-default login\n\n"
+        "See ONBOARDING.md Step 4 for details.\n",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from _e
 
 
 def log_event(level: str, source: str, message: str, detail: str = None):
@@ -86,15 +98,23 @@ def get_tickets(
 
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
 
+    # Build EXCEPT and CASE clauses based on what columns actually exist in the table.
+    # This makes the query forward/backward compatible as Dataform rebuilds the schema.
+    _gt_cols = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
+    _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
+    _optional_except = ["difficulty", "team_comment_replied"]
+    _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
+
     sql = f"""
         WITH live AS (
             SELECT
-                gt.* EXCEPT(assigned_to, manual_status, difficulty, domain, ticket_status),
+                gt.* EXCEPT({_except_cols}),
                 COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
                 tm.status                                               AS manual_status,
                 COALESCE(tm.domain, gt.domain)                          AS domain,
                 CASE
-                    WHEN gt.team_commented OR gt.team_comment_replied OR gt.team_reacted THEN 'answered'
+                    WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
                     WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                     WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
                     ELSE 'open'
@@ -104,6 +124,7 @@ def get_tickets(
                 SELECT * FROM `{config.META_TABLE}`
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
             ) tm ON gt.content_id = tm.content_id
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
         )
         SELECT
             *,
@@ -124,15 +145,19 @@ def get_tickets(
 
 
 def get_ticket_detail(content_id: str) -> dict:
+    _gt_cols = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
+    _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
+    _optional_except = ["difficulty", "team_comment_replied"]
+    _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
     sql = f"""
         SELECT
-            gt.* EXCEPT(assigned_to, manual_status, difficulty, domain, ticket_status),
+            gt.* EXCEPT({_except_cols}),
             COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
             tm.status                                               AS manual_status,
-            COALESCE(tm.difficulty, gt.difficulty)                  AS difficulty,
             COALESCE(tm.domain, gt.domain)                          AS domain,
             CASE
-                WHEN gt.team_commented OR gt.team_reacted           THEN 'answered'
+                WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
                 WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                 WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
                 ELSE 'open'
@@ -236,7 +261,8 @@ def trigger_assignment_refresh():
         )
 
         # Use the most recent compilation result so we don't need to compile fresh.
-        results = list(df_client.list_compilation_results(parent=repo, page_size=1))
+        req = dataform_v1beta1.ListCompilationResultsRequest(parent=repo)
+        results = list(df_client.list_compilation_results(request=req))
         if not results:
             return
 
