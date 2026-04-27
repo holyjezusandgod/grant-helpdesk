@@ -810,19 +810,31 @@ with tab_settings:
         "Each team member needs their own key. Generate one in your MN admin panel under "
         "**Admin → Settings → API Keys**."
     )
-    _saved_key = bq_client.get_mn_api_key(current_user) if current_user else None
-    _key_input = st.text_input(
-        "API Key",
-        value=_saved_key or "",
-        type="password",
-        placeholder="Paste your Mighty Networks API key here",
-    )
-    if st.button("Save API Key", type="primary"):
-        if _key_input.strip():
-            bq_client.save_mn_api_key(current_user, _key_input.strip())
-            st.success("API key saved.")
-        else:
-            st.warning("Please enter an API key.")
+
+    @st.dialog("Add Mighty Networks API Key")
+    def api_key_dialog():
+        st.caption("Your key is stored securely in BigQuery and never shown again.")
+        new_key = st.text_input("Paste your API key", type="password", placeholder="mn_live_...")
+        c1, c2 = st.columns(2)
+        if c1.button("Save", type="primary", use_container_width=True):
+            if new_key.strip():
+                bq_client.save_mn_api_key(current_user, new_key.strip())
+                st.success("Saved.")
+                st.rerun()
+            else:
+                st.warning("Please enter a key.")
+        if c2.button("Cancel", use_container_width=True):
+            st.rerun()
+
+    _has_key = bq_client.get_mn_api_key(current_user) is not None if current_user else False
+    if _has_key:
+        st.success("✓ API key configured")
+        if st.button("Replace key"):
+            api_key_dialog()
+    else:
+        st.warning("No API key set")
+        if st.button("Add API Key", type="primary"):
+            api_key_dialog()
 
     st.divider()
     st.subheader("Classifier Prompt Settings")
