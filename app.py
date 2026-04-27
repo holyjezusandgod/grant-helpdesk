@@ -4,37 +4,206 @@ import streamlit as st
 import bq_client
 import config
 
-st.set_page_config(page_title=config.APP_NAME, layout="wide")
+st.set_page_config(page_title=config.APP_NAME, layout="wide", page_icon="🎯")
 
-st.markdown("""
+# ── Brand palette ──────────────────────────────────────────────────────────────
+INDIGO  = "#4a52a3"
+YELLOW  = "#f5c520"
+GREEN   = "#2e9b2e"
+BLUE    = "#2d6ee0"
+RED     = "#e03c3c"
+PURPLE  = "#7040a8"
+PINK    = "#e040a0"
+CYAN    = "#35c0e0"
+
+st.markdown(f"""
 <style>
-button[data-testid="baseButton-primary"] {
-    background-color: #0e1117 !important;
-    color: #ff8800 !important;
-    border: 1px solid #555 !important;
-}
-button[data-testid="baseButton-primary"]:hover {
-    border-color: #ff8800 !important;
-    color: #ff8800 !important;
-    background-color: #1a1a1a !important;
-}
+/* ── Global white background ── */
+.stApp {{
+    background-color: #ffffff !important;
+}}
+section[data-testid="stMain"] > div {{
+    background-color: #ffffff !important;
+}}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {{
+    background-color: #1e2a5e !important;
+}}
+[data-testid="stSidebar"] * {{
+    color: #ffffff !important;
+}}
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stTextInput label,
+[data-testid="stSidebar"] .stRadio label {{
+    color: #a0b4d8 !important;
+    font-size: 0.78rem !important;
+}}
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {{
+    color: #ffffff !important;
+}}
+[data-testid="stSidebar"] hr {{
+    border-color: rgba(255,255,255,0.15) !important;
+}}
+
+/* ── Buttons ── */
+button[data-testid="baseButton-secondary"] {{
+    background-color: {INDIGO} !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 6px !important;
+}}
+button[data-testid="baseButton-secondary"]:hover {{
+    background-color: #3a4190 !important;
+    color: #ffffff !important;
+}}
+button[data-testid="baseButton-primary"] {{
+    background-color: {INDIGO} !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 6px !important;
+}}
+
+/* ── Status badges ── */
+.badge {{
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}}
+.badge-open           {{ background: {BLUE};   color: #fff; }}
+.badge-answered       {{ background: {GREEN};  color: #fff; }}
+.badge-closed         {{ background: {GREEN};  color: #fff; }}
+.badge-cancelled      {{ background: {RED};    color: #fff; }}
+.badge-not_a_question {{ background: #aaa;     color: #fff; }}
+
+/* ── Urgency text ── */
+.urg-normal   {{ color: {GREEN};  font-weight: 600; font-size: 0.82rem; }}
+.urg-urgent   {{ color: #c49a00; font-weight: 600; font-size: 0.82rem; }}
+.urg-critical {{ color: {RED};    font-weight: 600; font-size: 0.82rem; }}
+
+/* ── Metric cards ── */
+[data-testid="metric-container"] {{
+    background: #f4f6fb;
+    border-left: 4px solid {INDIGO};
+    border-radius: 8px;
+    padding: 10px 14px !important;
+}}
+[data-testid="metric-container"] label {{
+    color: #555 !important;
+    font-size: 0.8rem !important;
+}}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {{
+    color: {INDIGO} !important;
+    font-weight: 700;
+}}
+
+/* ── Tabs ── */
+button[data-baseweb="tab"] {{
+    font-weight: 600;
+    color: #555 !important;
+}}
+button[data-baseweb="tab"][aria-selected="true"] {{
+    color: {INDIGO} !important;
+    border-bottom: 3px solid {INDIGO} !important;
+}}
+
+/* ── Page header banner ── */
+.lesko-header {{
+    background: linear-gradient(135deg, {INDIGO} 0%, {BLUE} 100%);
+    color: white;
+    padding: 12px 20px;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}}
+.lesko-header h2 {{
+    margin: 0;
+    font-size: 1.2rem;
+    color: white !important;
+}}
+.lesko-header .sub {{
+    font-size: 0.82rem;
+    opacity: 0.85;
+    margin-top: 2px;
+}}
+
+/* ── Dividers ── */
+hr {{
+    border-color: #e8eaf0 !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
+# ── Domain icons ───────────────────────────────────────────────────────────────
+DOMAIN_ICON = {
+    "Pay Debt & Bills":        "💰",
+    "Home & Housing Help":     "🏠",
+    "Cars & Car Repairs":      "🚗",
+    "Healthcare Assistance":   "🏥",
+    "Start A Business":        "🚀",
+    "Launch A Nonprofit":      "🤲",
+    "Boost Your Career":       "💼",
+    "Taxes Help Guidance":     "🧾",
+    "Find Legal Help":         "⚖️",
+    "Family & Children":       "👨‍👩‍👧",
+    "Seniors & Disabilities":  "🛡️",
+    "Programs for Veterans":   "🎖️",
+    "Community Support":       "🤝",
+    "Other":                   "📌",
+}
+
 STATUS_ICON = {
-    "open":      "🔵",
-    "closed":    "🟢",
-    "cancelled": "⛔",
-    "answered":  "✅",
+    "open":            "🔵",
+    "closed":          "🟢",
+    "cancelled":       "🔴",
+    "answered":        "✅",
+    "not_a_question":  "⚪",
 }
 URGENCY_ICON = {
     "normal":   "🟢",
-    "urgent":   "🟠",
+    "urgent":   "🟡",
     "critical": "🔴",
 }
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
-current_user = os.environ.get("LESKO_USER", "")
+if not st.user.is_logged_in:
+    # ── Login page ──────────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="
+        display:flex; flex-direction:column; align-items:center;
+        justify-content:center; min-height:70vh; gap:12px;
+    ">
+      <div style="
+          background:linear-gradient(135deg,{INDIGO} 0%,{BLUE} 100%);
+          color:white; border-radius:16px; padding:40px 56px;
+          text-align:center; max-width:420px; box-shadow:0 4px 24px rgba(74,82,163,0.18);
+      ">
+        <div style="font-size:3rem; margin-bottom:8px;">🎯</div>
+        <h2 style="margin:0 0 6px; color:white; font-size:1.6rem;">Lesko Help Desk</h2>
+        <p style="opacity:0.85; font-size:0.9rem; margin:0 0 28px;">
+          Grant support queue — team access only
+        </p>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        st.button(
+            "Sign in with Google",
+            on_click=st.login,
+            args=("google",),
+            use_container_width=True,
+            type="primary",
+        )
+    st.stop()
+
+user         = st.user
+current_user = user.email or user.name or ""
 
 # ── Session state defaults ─────────────────────────────────────────────────────
 if "member_id_filter" not in st.session_state:
@@ -42,12 +211,25 @@ if "member_id_filter" not in st.session_state:
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title(config.APP_NAME)
+    # User account block
+    avatar_url = getattr(user, "picture", None)
+    name       = getattr(user, "name",    None) or current_user
+    email      = getattr(user, "email",   None) or ""
 
-    if current_user:
-        st.markdown(f"Logged in as **{current_user}**")
+    if avatar_url:
+        ac1, ac2 = st.columns([1, 3])
+        ac1.image(avatar_url, width=40)
+        ac2.markdown(f"**{name}**")
+        ac2.caption(email)
     else:
-        st.warning("Set the `LESKO_USER` environment variable to identify yourself.")
+        st.markdown(f"**{name}**")
+        st.caption(email)
+
+    if st.button("Sign out", use_container_width=True):
+        st.logout()
+
+    st.divider()
+    st.markdown("### 🎯 Lesko Help Desk")
 
     st.divider()
     st.subheader("Filters")
@@ -60,8 +242,10 @@ with st.sidebar:
         return b
 
     # 1. Status (feedback statuses live in the Train AI tab, not here)
+    _status_opts = ["All"] + config.TICKET_STATUSES
     filter_status = filter_row("Status").selectbox(
-        "Status", ["All"] + config.TICKET_STATUSES,
+        "Status", _status_opts,
+        index=_status_opts.index("open"),
         format_func=lambda s: s if s == "All" else s.replace("_", " ").title(),
         label_visibility="collapsed",
     )
@@ -123,7 +307,7 @@ with st.sidebar:
 
 
 # ── Data loaders ───────────────────────────────────────────────────────────────
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_tickets(status, date_from, date_to, assignee, member_id, urgency, domain):
     return bq_client.get_tickets(
         status=status,
@@ -135,13 +319,17 @@ def load_tickets(status, date_from, date_to, assignee, member_id, urgency, domai
         domain=domain,
     )
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_open_stats():
     return bq_client.get_open_stats()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_daily_stats():
     return bq_client.get_daily_stats()
+
+@st.cache_data(ttl=300)
+def load_report(report_type: str, date_from: str, date_to: str):
+    return bq_client.get_report_data(report_type, date_from, date_to)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -157,12 +345,14 @@ def show_ticket_dialog(content_id: str):
     status_icon  = STATUS_ICON.get(ticket.get("ticket_status"), "⚪")
     urgency_icon = URGENCY_ICON.get(ticket.get("urgency"), "⚪")
     content_type = ticket.get("content_type") or "—"
+    domain_icon  = DOMAIN_ICON.get(ticket.get("domain") or "", "")
 
     # Header
     st.subheader(
         f"{status_icon} {ticket.get('member_name', 'Unknown')}  "
         f"{urgency_icon} {(ticket.get('urgency') or '').capitalize()}  "
         f"· `{content_type}`"
+        + (f"  {domain_icon} {ticket.get('domain')}" if domain_icon else "")
     )
 
     # Metadata
@@ -281,20 +471,27 @@ def show_ticket_dialog(content_id: str):
 
     st.divider()
 
-    # Answer entry
-    st.markdown("**Post an Answer**")
-    if not current_user:
-        st.warning("Set the `LESKO_USER` env var to post answers.")
+    # Answer entry — posts to Mighty Networks via API
+    st.markdown("**Post an Answer to Mighty Networks**")
+    _mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
+    if not _mn_key:
+        st.warning("No Mighty Networks API key set. Add yours in the ⚙️ Settings tab.")
     else:
+        # Extract numeric post ID from content_id (e.g. "post_12345" → "12345")
+        _post_id = (ticket.get("thread_id") or content_id).replace("post_", "")
         answer_body = st.text_area(
             "Answer", key=f"answer_{content_id}",
             label_visibility="collapsed", height=120,
         )
-        if st.button("Post Answer", key=f"post_answer_{content_id}"):
+        if st.button("Post Answer to MN", key=f"post_answer_{content_id}", type="primary"):
             if answer_body.strip():
-                bq_client.post_comment(content_id, current_user, answer_body.strip())
-                st.success("Answer posted.")
-                st.rerun()
+                try:
+                    bq_client.post_mn_comment(_post_id, answer_body.strip(), _mn_key)
+                    st.success("Answer posted to Mighty Networks.")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to post: {e}")
             else:
                 st.warning("Answer cannot be empty.")
 
@@ -364,7 +561,17 @@ def show_ticket_dialog(content_id: str):
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
-tab_main, tab_reports, tab_train, tab_settings = st.tabs(["Tickets", "Reports", "Train AI", "Settings"])
+st.markdown(f"""
+<div class="lesko-header">
+  <span style="font-size:1.8rem">🎯</span>
+  <div>
+    <h2>Lesko Help Desk</h2>
+    <div class="sub">Grant support queue — powered by Lesko community data</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+tab_main, tab_reports, tab_train, tab_settings = st.tabs(["🎫 Tickets", "📊 Reports", "🤖 Train AI", "⚙️ Settings"])
 
 
 # ── MAIN TAB ──────────────────────────────────────────────────────────────────
@@ -379,9 +586,9 @@ with tab_main:
 
     # KPI Row A — open breakdown
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("🆕 Open",     int(open_stats.get("open",     0)))
+    a1.metric("🔵 Open",     int(open_stats.get("open",     0)))
     a2.metric("🟢 Normal",   int(open_stats.get("normal",   0)))
-    a3.metric("🟠 Urgent",   int(open_stats.get("urgent",   0)))
+    a3.metric("🟡 Urgent",   int(open_stats.get("urgent",   0)))
     a4.metric("🔴 Critical", int(open_stats.get("critical", 0)))
 
     # KPI Row B — daily productivity
@@ -431,7 +638,9 @@ with tab_main:
                 st.session_state.member_id_filter = str(row["member_id"])
                 st.rerun()
 
-            c2.caption(str(row["body_preview"] or "")[:120])
+            domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
+            preview_text = str(row["body_preview"] or "")[:120]
+            c2.caption(f"{domain_icon} {preview_text}" if domain_icon else preview_text)
 
             # Assignee dropdown — saves on change without opening the ticket dialog
             _assignee_opts = ["— unassigned —"] + team_members
@@ -447,8 +656,12 @@ with tab_main:
                 on_change=_save_quick_assignee,
                 args=(row["content_id"],),
             )
-            c4.caption(f"{URGENCY_ICON.get(row['urgency'], '⚪')} {(row['urgency'] or '').capitalize()}")
-            c5.caption(f"{STATUS_ICON.get(row['ticket_status'], '⚪')} {(row['ticket_status'] or '').capitalize()}")
+            urg = (row.get("urgency") or "").lower()
+            urg_css = {"normal": "urg-normal", "urgent": "urg-urgent", "critical": "urg-critical"}.get(urg, "")
+            c4.markdown(f'<span class="{urg_css}">{URGENCY_ICON.get(urg, "⚪")} {urg.capitalize()}</span>', unsafe_allow_html=True)
+
+            status = (row.get("ticket_status") or "").lower()
+            c5.markdown(f'<span class="badge badge-{status}">{STATUS_ICON.get(status, "⚪")} {status.replace("_", " ").capitalize()}</span>', unsafe_allow_html=True)
 
             permalink = row.get("permalink") or ""
             if permalink:
@@ -474,7 +687,7 @@ with tab_reports:
 
     # 12.1 Volume
     st.markdown("#### Volume — Tickets In vs Answered")
-    vol = bq_client.get_report_data("volume", str(r_date_from), str(r_date_to))
+    vol = load_report("volume", str(r_date_from), str(r_date_to))
     if not vol.empty:
         st.bar_chart(vol.set_index("date")[["tickets_in", "tickets_closed"]])
     else:
@@ -484,7 +697,7 @@ with tab_reports:
 
     # 12.2 Response time
     st.markdown("#### Response Time")
-    rt = bq_client.get_report_data("response_time", str(r_date_from), str(r_date_to))
+    rt = load_report("response_time", str(r_date_from), str(r_date_to))
     if not rt.empty:
         avg_min = round(rt["minutes_to_response"].mean(), 1)
         med_min = round(rt["minutes_to_response"].median(), 1)
@@ -500,7 +713,7 @@ with tab_reports:
 
     # 12.3 Team productivity
     st.markdown("#### Team Productivity — Tickets Closed")
-    tp = bq_client.get_report_data("team_productivity", str(r_date_from), str(r_date_to))
+    tp = load_report("team_productivity", str(r_date_from), str(r_date_to))
     if not tp.empty:
         st.bar_chart(tp.set_index("assigned_to")["tickets_closed"])
     else:
@@ -510,7 +723,7 @@ with tab_reports:
 
     # 12.4 Domain breakdown
     st.markdown("#### Domain Breakdown")
-    db = bq_client.get_report_data("domain_breakdown", str(r_date_from), str(r_date_to))
+    db = load_report("domain_breakdown", str(r_date_from), str(r_date_to))
     if not db.empty:
         st.bar_chart(db.set_index("domain")["tickets"])
     else:
@@ -590,6 +803,28 @@ with tab_train:
 
 # ── SETTINGS TAB ──────────────────────────────────────────────────────────────
 with tab_settings:
+    # ── Mighty Networks API Key ───────────────────────────────────────────────
+    st.subheader("Your Mighty Networks API Key")
+    st.caption(
+        "Required to post answers directly to Mighty Networks from the ticket dialog. "
+        "Each team member needs their own key. Generate one in your MN admin panel under "
+        "**Admin → Settings → API Keys**."
+    )
+    _saved_key = bq_client.get_mn_api_key(current_user) if current_user else None
+    _key_input = st.text_input(
+        "API Key",
+        value=_saved_key or "",
+        type="password",
+        placeholder="Paste your Mighty Networks API key here",
+    )
+    if st.button("Save API Key", type="primary"):
+        if _key_input.strip():
+            bq_client.save_mn_api_key(current_user, _key_input.strip())
+            st.success("API key saved.")
+        else:
+            st.warning("Please enter an API key.")
+
+    st.divider()
     st.subheader("Classifier Prompt Settings")
     st.caption(
         "The AI classifier reads every community post and decides whether it "

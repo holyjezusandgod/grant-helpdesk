@@ -27,6 +27,11 @@ PROMPT_CONFIG_TABLE     = f"{PROJECT_ID}.{DATASET}.grant_prompt_config"
 FEEDBACK_VIEW           = f"{PROJECT_ID}.{DATASET}.grant_classification_feedback"
 CLASSIFIER_TABLE        = f"{PROJECT_ID}.{DATASET}.grant_question_classifier"
 
+TEAM_API_KEYS_TABLE = f"{PROJECT_ID}.{DATASET}.team_api_keys"
+
+MN_NETWORK_ID  = "4022250"
+MN_API_BASE    = "https://api.mn.co/admin/v1"
+
 DOMAINS = [
     "Pay Debt & Bills",
     "Home & Housing Help",

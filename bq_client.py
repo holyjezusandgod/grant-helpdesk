@@ -205,6 +205,56 @@ def post_comment(content_id: str, author: str, body: str):
         raise RuntimeError(f"Comment insert failed: {errors}")
 
 
+def get_mn_api_key(email: str) -> str | None:
+    """Return the stored Mighty Networks API key for a user, or None."""
+    sql = f"""
+        SELECT mn_api_key
+        FROM `{config.TEAM_API_KEYS_TABLE}`
+        WHERE email = '{email}'
+        ORDER BY updated_at DESC
+        LIMIT 1
+    """
+    df = client.query(sql).to_dataframe()
+    if df.empty:
+        return None
+    return df.iloc[0]["mn_api_key"]
+
+
+def save_mn_api_key(email: str, api_key: str):
+    """Upsert a Mighty Networks API key for a user."""
+    sql = f"""
+        MERGE `{config.TEAM_API_KEYS_TABLE}` T
+        USING (SELECT '{email}' AS email, '{api_key}' AS mn_api_key) S
+        ON T.email = S.email
+        WHEN MATCHED THEN
+            UPDATE SET mn_api_key = S.mn_api_key, updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN
+            INSERT (email, mn_api_key, updated_at)
+            VALUES (S.email, S.mn_api_key, CURRENT_TIMESTAMP())
+    """
+    client.query(sql).result()
+
+
+def post_mn_comment(post_id: str, body: str, api_key: str, reply_to_id: int = None) -> dict:
+    """Post a comment to Mighty Networks via the API. Returns the created comment dict."""
+    import urllib.request, json as _json
+    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/posts/{post_id}/comments"
+    payload = {"text": body}
+    if reply_to_id:
+        payload["reply_to_id"] = reply_to_id
+    data = _json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url, data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type":  "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return _json.loads(resp.read())
+
+
 def update_ticket_meta(
     content_id: str,
     status: str,
