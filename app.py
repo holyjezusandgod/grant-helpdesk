@@ -421,9 +421,9 @@ def show_ticket_dialog(content_id: str):
     override_assignment = False
     if new_assignee != "— unassigned —" and can_edit:
         override_assignment = st.checkbox(
-            f"Set as permanent helper for **{ticket.get('member_name', 'this member')}**",
+            f"Set as permanent grant coach for **{ticket.get('member_name', 'this member')}**",
             value=False,
-            help="Overrides the automatic assignment rule — all future tickets from this member will go to this helper.",
+            help="Overrides the automatic assignment rule — all future tickets from this member will go to this grant coach.",
             key=f"override_{content_id}",
         )
 
@@ -464,7 +464,7 @@ def show_ticket_dialog(content_id: str):
                     ticket["member_id"], assignee_val, current_user
                 )
             st.cache_data.clear()
-            st.success("Saved." if not override_assignment else "Saved — permanent helper updated.")
+            st.success("Saved." if not override_assignment else "Saved — permanent grant coach updated.")
             st.rerun()
     else:
         st.caption("⚠️ Ticket is closed — status locked.")

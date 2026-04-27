@@ -2,7 +2,7 @@ config {
   type: "table",
   name: "grant_member_assignments",
   tags: ["helpdesk"],
-  description: "Permanent member → helper coupling. Default is the helper from the member's first-ever assigned ticket. A UI override in member_assignment_overrides takes precedence."
+  description: "Permanent member → grant coach coupling. Default is the grant coach from the member's first-ever assigned ticket. A UI override in member_assignment_overrides takes precedence."
 }
 
 WITH first_assignments AS (

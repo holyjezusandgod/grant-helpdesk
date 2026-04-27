@@ -78,7 +78,7 @@ question in the comments. These are three independent help requests.
 - Tickets stay at the individual question level — threads are context only
 - Each ticket keeps its own `member_id`, assignment, and status
 - `thread_id` links them for display/grouping purposes only
-- Each member's helper assignment is independent of other members in the thread
+- Each member's grant coach assignment is independent of other members in the thread
 
 **Remaining UI question:** The ticket list could optionally group rows by
 `thread_id`. Needs a design decision on whether that's wanted.

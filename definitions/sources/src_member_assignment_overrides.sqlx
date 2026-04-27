@@ -3,5 +3,5 @@ config {
   database: "bigtribebuilders",
   schema: "grant_helpdesk",
   name: "member_assignment_overrides",
-  description: "App-written table: explicit member → helper overrides set from the UI. One row per member. Takes precedence over the first-assignment default in grant_member_assignments."
+  description: "App-written table: explicit member → grant coach overrides set from the UI. One row per member. Takes precedence over the first-assignment default in grant_member_assignments."
 }
