@@ -512,7 +512,20 @@ def get_thread(thread_id: str) -> pd.DataFrame:
     thread_id is always 'post_NNN'. Returns author_type ('team'/'member') and
     depth so the UI can render the conversation correctly.
     """
-    post_id = thread_id.replace("post_", "")
+    if thread_id.startswith("comment_"):
+        # thread_id not yet backfilled — look up the parent post from core_comments
+        comment_id = thread_id.replace("comment_", "")
+        lookup = client.query(f"""
+            SELECT CAST(targetable_id AS STRING) AS post_id
+            FROM `bigtribebuilders.dataform.core_comments`
+            WHERE comment_id = {comment_id} AND client_id = 'lesko_4022250'
+            LIMIT 1
+        """).to_dataframe()
+        if lookup.empty:
+            return pd.DataFrame()
+        post_id = lookup.iloc[0]["post_id"]
+    else:
+        post_id = thread_id.replace("post_", "")
     sql = f"""
         WITH root_post AS (
             SELECT
@@ -540,7 +553,7 @@ def get_thread(thread_id: str) -> pd.DataFrame:
                 ON  p.creator_id = m.member_id
                 AND m.client_id  = 'lesko_4022250'
             WHERE p.client_id = 'lesko_4022250'
-              AND p.post_id   = {post_id}
+              AND p.post_id   = CAST('{post_id}' AS INT64)
         ),
 
         all_comments AS (
@@ -569,7 +582,7 @@ def get_thread(thread_id: str) -> pd.DataFrame:
                 ON  c.author_id = m.member_id
                 AND m.client_id = 'lesko_4022250'
             WHERE c.client_id      = 'lesko_4022250'
-              AND c.targetable_id  = {post_id}
+              AND c.targetable_id  = CAST('{post_id}' AS INT64)
               AND c.comment_status = 'active'
         )
 
