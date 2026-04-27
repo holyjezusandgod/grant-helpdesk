@@ -1,3 +1,8 @@
 node_modules/
 .df-credentials.json
 .streamlit/secrets.toml
+.DS_Store
+__pycache__/
+*.pyc
+false_classifications.csv
+lesko_helpdesk_v0.1_spec.md
