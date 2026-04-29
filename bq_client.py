@@ -272,10 +272,12 @@ def get_grant_coaches() -> pd.DataFrame:
 
 def add_grant_coach(member_id: int, full_name: str, email: str, added_by: str):
     now = datetime.datetime.utcnow().isoformat()
+    _name     = full_name.replace("'", "\\'")
+    _email    = email.replace("'", "\\'")
+    _added_by = added_by.replace("'", "\\'")
     sql = f"""
         INSERT INTO `{config.GRANT_COACHES_TABLE}` (member_id, full_name, email, added_at, added_by)
-        VALUES ({member_id}, '{full_name.replace("'","\\'")}', '{email.replace("'","\\'")}',
-                TIMESTAMP '{now}', '{added_by.replace("'","\\'")}')
+        VALUES ({member_id}, '{_name}', '{_email}', TIMESTAMP '{now}', '{_added_by}')
     """
     client.query(sql).result()
 
@@ -307,9 +309,13 @@ def mn_promote_to_host(member_id: int, admin_api_key: str) -> dict:
 
 def post_mn_comment(post_id: str, body: str, api_key: str, reply_to_id: int = None) -> dict:
     """Post a comment to Mighty Networks via the API. Returns the created comment dict."""
-    import urllib.request, json as _json
-    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/posts/{post_id}/comments"
-    payload = {"text": body}
+    import urllib.request, urllib.error, json as _json
+    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/comments"
+    payload = {
+        "body":            body,
+        "targetable_type": "Post",
+        "targetable_id":   int(post_id),
+    }
     if reply_to_id:
         payload["reply_to_id"] = reply_to_id
     data = _json.dumps(payload).encode()
@@ -321,8 +327,12 @@ def post_mn_comment(post_id: str, body: str, api_key: str, reply_to_id: int = No
         },
         method="POST",
     )
-    with urllib.request.urlopen(req) as resp:
-        return _json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return _json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {e.code} {e.reason} — {detail}") from e
 
 
 def update_ticket_meta(
