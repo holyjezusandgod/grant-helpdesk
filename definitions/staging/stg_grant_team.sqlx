@@ -1,26 +1,21 @@
 config {
   type: "view",
   name: "stg_grant_team",
-  description: "Hosts and moderators of the Lesko grant community. Used to exclude their content from the ticket feed and to populate the assignee dropdown."
+  description: "Active grant coaches — sourced from the grant_coaches config table, enriched with live MN member data. Only members explicitly added as coaches appear here."
 }
 
 SELECT
-  member_id,
-  first_name,
-  last_name,
-  CONCAT(
-    COALESCE(first_name, ''),
-    ' ',
-    COALESCE(last_name, '')
-  )             AS full_name,
-  email_address,
-  network_role,
-  member_type,
-  avatar_url,
-  permalink     AS member_permalink
+  m.member_id,
+  m.first_name,
+  m.last_name,
+  gc.full_name,
+  gc.email                AS email_address,
+  m.network_role,
+  m.member_type,
+  m.avatar_url,
+  m.permalink             AS member_permalink
 
-FROM ${ref("core_members")}
-
-WHERE client_id     = 'lesko_4022250'
-  AND member_status = 'active'
-  AND network_role  IN ('host', 'moderator')
+FROM `bigtribebuilders.grant_helpdesk.grant_coaches` gc
+LEFT JOIN ${ref("core_members")} m
+  ON  m.member_id  = gc.member_id
+  AND m.client_id  = 'lesko_4022250'

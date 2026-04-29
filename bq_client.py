@@ -235,6 +235,76 @@ def save_mn_api_key(email: str, api_key: str):
     client.query(sql).result()
 
 
+def search_members(query: str, limit: int = 20) -> pd.DataFrame:
+    """Search community members by name or email. Excludes existing grant coaches."""
+    q = query.replace("'", "\\'")
+    sql = f"""
+        SELECT
+            m.member_id,
+            TRIM(CONCAT(COALESCE(m.first_name,''), ' ', COALESCE(m.last_name,''))) AS full_name,
+            m.email_address,
+            m.network_role,
+            m.join_date
+        FROM `{config.PROJECT_ID}.dataform.core_members` m
+        WHERE m.client_id = 'lesko_4022250'
+          AND LOWER(m.member_status) = 'active'
+          AND (
+              LOWER(CONCAT(COALESCE(m.first_name,''), ' ', COALESCE(m.last_name,''))) LIKE LOWER('%{q}%')
+              OR LOWER(m.email_address) LIKE LOWER('%{q}%')
+          )
+          AND m.member_id NOT IN (
+              SELECT member_id FROM `{config.GRANT_COACHES_TABLE}`
+          )
+        ORDER BY m.last_name, m.first_name
+        LIMIT {limit}
+    """
+    return client.query(sql).to_dataframe()
+
+
+def get_grant_coaches() -> pd.DataFrame:
+    sql = f"""
+        SELECT gc.member_id, gc.full_name, gc.email, gc.added_at, gc.added_by
+        FROM `{config.GRANT_COACHES_TABLE}` gc
+        ORDER BY gc.added_at DESC
+    """
+    return client.query(sql).to_dataframe()
+
+
+def add_grant_coach(member_id: int, full_name: str, email: str, added_by: str):
+    now = datetime.datetime.utcnow().isoformat()
+    sql = f"""
+        INSERT INTO `{config.GRANT_COACHES_TABLE}` (member_id, full_name, email, added_at, added_by)
+        VALUES ({member_id}, '{full_name.replace("'","\\'")}', '{email.replace("'","\\'")}',
+                TIMESTAMP '{now}', '{added_by.replace("'","\\'")}')
+    """
+    client.query(sql).result()
+
+
+def remove_grant_coach(member_id: int):
+    sql = f"""
+        DELETE FROM `{config.GRANT_COACHES_TABLE}`
+        WHERE member_id = {member_id}
+    """
+    client.query(sql).result()
+
+
+def mn_promote_to_host(member_id: int, admin_api_key: str) -> dict:
+    """Promote a community member to host role via MN Admin API."""
+    import urllib.request, json as _json
+    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/members/{member_id}/"
+    data = _json.dumps({"role": "host"}).encode()
+    req = urllib.request.Request(
+        url, data=data,
+        headers={
+            "Authorization": f"Bearer {admin_api_key}",
+            "Content-Type":  "application/json",
+        },
+        method="PATCH",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return _json.loads(resp.read())
+
+
 def post_mn_comment(post_id: str, body: str, api_key: str, reply_to_id: int = None) -> dict:
     """Post a comment to Mighty Networks via the API. Returns the created comment dict."""
     import urllib.request, json as _json
@@ -467,10 +537,37 @@ def get_classification_feedback(date_from: str, date_to: str) -> pd.DataFrame:
     return client.query(sql).to_dataframe()
 
 
+def _live_status_cte() -> tuple[str, str]:
+    """
+    Returns (except_cols, team_replied_sql) for building the live-join CTE
+    that re-applies ticket_metadata on top of the materialized grant_tickets table.
+    Used by both get_open_stats() and get_daily_stats() so their KPI numbers
+    always match the ticket list (which also uses a live join).
+    """
+    _gt_cols = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
+    return _team_replied_sql
+
+
 def get_open_stats() -> dict:
-    # 'open' is the default status in the view; 'new'/'assigned' are manual overrides.
-    # All three mean the ticket is still unresolved.
+    _team_replied_sql = _live_status_cte()
     sql = f"""
+        WITH live AS (
+            SELECT
+                gt.created_at,
+                CASE
+                    WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
+                    WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
+                    WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
+                    ELSE 'open'
+                END AS ticket_status
+            FROM `{config.TICKETS_TABLE}` gt
+            LEFT JOIN (
+                SELECT * FROM `{config.META_TABLE}`
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+            ) tm ON gt.content_id = tm.content_id
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+        )
         SELECT
             COUNTIF(ticket_status IN ('open', 'new', 'assigned'))                                       AS open,
             COUNTIF(ticket_status IN ('open', 'new', 'assigned')
@@ -479,15 +576,33 @@ def get_open_stats() -> dict:
                 AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) BETWEEN 24 AND 47)            AS urgent,
             COUNTIF(ticket_status IN ('open', 'new', 'assigned')
                 AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) >= 48)                        AS critical
-        FROM `{config.TICKETS_TABLE}`
+        FROM live
     """
     row = client.query(sql).to_dataframe().iloc[0]
     return row.to_dict()
 
 
 def get_daily_stats() -> dict:
-    # 'answered' = team engaged; 'closed' = manually closed — both count as resolved.
+    _team_replied_sql = _live_status_cte()
     sql = f"""
+        WITH live AS (
+            SELECT
+                gt.created_at,
+                gt.first_engagement_at,
+                COALESCE(tm.updated_at, gt.ticket_updated_at) AS ticket_updated_at,
+                CASE
+                    WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
+                    WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
+                    WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
+                    ELSE 'open'
+                END AS ticket_status
+            FROM `{config.TICKETS_TABLE}` gt
+            LEFT JOIN (
+                SELECT * FROM `{config.META_TABLE}`
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+            ) tm ON gt.content_id = tm.content_id
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+        )
         SELECT
             COUNTIF(DATE(created_at) = CURRENT_DATE())                                              AS in_today,
             COUNTIF(ticket_status IN ('answered', 'closed')
@@ -498,7 +613,7 @@ def get_daily_stats() -> dict:
                     AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
                 ) / 30.0, 1
             )                                                                                       AS daily_avg
-        FROM `{config.TICKETS_TABLE}`
+        FROM live
     """
     row = client.query(sql).to_dataframe().iloc[0]
     result = row.to_dict()

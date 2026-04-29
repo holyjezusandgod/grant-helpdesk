@@ -12,130 +12,410 @@ YELLOW  = "#f5c520"
 GREEN   = "#2e9b2e"
 BLUE    = "#2d6ee0"
 RED     = "#e03c3c"
-PURPLE  = "#7040a8"
-PINK    = "#e040a0"
-CYAN    = "#35c0e0"
+BG      = "#e8eef6"
+CARD_BG = "#ffffff"
+ROW_BG  = "#f7f9fc"
 
 st.markdown(f"""
 <style>
-/* ── Global white background ── */
+/* ── Global background ── */
 .stApp {{
-    background-color: #ffffff !important;
+    background-color: {BG} !important;
 }}
 section[data-testid="stMain"] > div {{
-    background-color: #ffffff !important;
+    background-color: {BG} !important;
+}}
+.main .block-container {{
+    padding-top: 1rem !important;
+    padding-bottom: 2rem !important;
 }}
 
-/* ── Sidebar ── */
+/* ── Sidebar (filter panel) ── */
 [data-testid="stSidebar"] {{
-    background-color: #1e2a5e !important;
+    background-color: {CARD_BG} !important;
+    border-right: 1px solid #e8eef6 !important;
 }}
 [data-testid="stSidebar"] * {{
-    color: #ffffff !important;
+    color: #111827 !important;
 }}
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stTextInput label,
-[data-testid="stSidebar"] .stRadio label {{
-    color: #a0b4d8 !important;
-    font-size: 0.78rem !important;
+[data-testid="stSidebar"] .stRadio label,
+[data-testid="stSidebar"] .stPills label {{
+    color: #6b7280 !important;
+    font-size: 0.68rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
 }}
-[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {{
-    color: #ffffff !important;
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {{
+    color: #111827 !important;
 }}
 [data-testid="stSidebar"] hr {{
-    border-color: rgba(255,255,255,0.15) !important;
+    border-color: #e8eef6 !important;
 }}
-
-/* ── Buttons ── */
-button[data-testid="baseButton-secondary"] {{
-    background-color: {INDIGO} !important;
-    color: #ffffff !important;
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {{
+    color: #6b7280 !important;
+}}
+/* sidebar input field backgrounds */
+[data-testid="stSidebar"] [data-baseweb="select"] > div,
+[data-testid="stSidebar"] [data-baseweb="input"] > div {{
+    background-color: #f5f7fb !important;
+    border-radius: 12px !important;
     border: none !important;
-    border-radius: 6px !important;
-}}
-button[data-testid="baseButton-secondary"]:hover {{
-    background-color: #3a4190 !important;
-    color: #ffffff !important;
-}}
-button[data-testid="baseButton-primary"] {{
-    background-color: {INDIGO} !important;
-    color: #ffffff !important;
-    border: none !important;
-    border-radius: 6px !important;
-}}
-
-/* ── Status badges ── */
-.badge {{
-    display: inline-block;
-    padding: 2px 9px;
-    border-radius: 12px;
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-}}
-.badge-open           {{ background: {BLUE};   color: #fff; }}
-.badge-answered       {{ background: {GREEN};  color: #fff; }}
-.badge-closed         {{ background: {GREEN};  color: #fff; }}
-.badge-cancelled      {{ background: {RED};    color: #fff; }}
-.badge-not_a_question {{ background: #aaa;     color: #fff; }}
-
-/* ── Urgency text ── */
-.urg-normal   {{ color: {GREEN};  font-weight: 600; font-size: 0.82rem; }}
-.urg-urgent   {{ color: #c49a00; font-weight: 600; font-size: 0.82rem; }}
-.urg-critical {{ color: {RED};    font-weight: 600; font-size: 0.82rem; }}
-
-/* ── Metric cards ── */
-[data-testid="metric-container"] {{
-    background: #f4f6fb;
-    border-left: 4px solid {INDIGO};
-    border-radius: 8px;
-    padding: 10px 14px !important;
-}}
-[data-testid="metric-container"] label {{
-    color: #555 !important;
-    font-size: 0.8rem !important;
-}}
-[data-testid="metric-container"] [data-testid="stMetricValue"] {{
-    color: {INDIGO} !important;
-    font-weight: 700;
 }}
 
 /* ── Tabs ── */
 button[data-baseweb="tab"] {{
-    font-weight: 600;
-    color: #555 !important;
+    font-weight: 500 !important;
+    color: #6b7280 !important;
+    border-radius: 14px !important;
+    padding: 8px 18px !important;
+    transition: all 0.15s;
+    font-size: 0.85rem !important;
 }}
 button[data-baseweb="tab"][aria-selected="true"] {{
-    color: {INDIGO} !important;
-    border-bottom: 3px solid {INDIGO} !important;
+    background-color: {INDIGO} !important;
+    color: #ffffff !important;
+    border-bottom: none !important;
+}}
+[data-baseweb="tab-highlight"] {{ display: none !important; }}
+[data-baseweb="tab-border"] {{ display: none !important; }}
+[data-baseweb="tab-list"] {{
+    background: {CARD_BG} !important;
+    border-radius: 20px !important;
+    padding: 6px !important;
+    gap: 2px !important;
+    margin-bottom: 12px !important;
 }}
 
-/* ── Page header banner ── */
-.lesko-header {{
-    background: linear-gradient(135deg, {INDIGO} 0%, {BLUE} 100%);
-    color: white;
-    padding: 12px 20px;
-    border-radius: 10px;
-    margin-bottom: 16px;
+/* ── Header card ── */
+.lesko-header-card {{
+    background: {CARD_BG};
+    border-radius: 20px;
+    padding: 16px 22px;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 14px;
+    margin-bottom: 12px;
 }}
-.lesko-header h2 {{
-    margin: 0;
-    font-size: 1.2rem;
-    color: white !important;
+.header-logo {{
+    width: 40px; height: 40px;
+    background: {INDIGO};
+    border-radius: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 500;
+    font-size: 1.1rem;
+    flex-shrink: 0;
 }}
-.lesko-header .sub {{
-    font-size: 0.82rem;
-    opacity: 0.85;
+.header-app-name {{
+    font-size: 1rem;
+    font-weight: 500;
+    color: #111827;
+    display: block;
+    line-height: 1.2;
+}}
+.header-sub {{
+    font-size: 0.7rem;
+    color: #6b7280;
+    display: block;
     margin-top: 2px;
+}}
+.header-user-pill {{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #f5f7fb;
+    padding: 5px 12px 5px 5px;
+    border-radius: 999px;
+    margin-left: auto;
+}}
+.header-user-avatar {{
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: {YELLOW};
+    color: #5a4400;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.68rem;
+    font-weight: 500;
+}}
+.header-user-name {{
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: #111827;
+}}
+
+/* ── KPI Row A cards (icon top-left, label top-right, value bottom) ── */
+.kpi-card {{
+    background: {CARD_BG};
+    border-radius: 18px;
+    padding: 14px;
+    min-height: 88px;
+}}
+.kpi-card-top {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}}
+.kpi-icon {{
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 0.85rem;
+    font-weight: 500;
+    flex-shrink: 0;
+}}
+.kpi-label {{
+    font-size: 0.68rem;
+    color: #6b7280;
+    font-weight: 500;
+}}
+.kpi-value {{
+    font-size: 1.6rem;
+    font-weight: 500;
+    color: #111827;
+    line-height: 1;
+}}
+
+/* ── KPI Row B plain cards ── */
+.kpi-b-card {{
+    background: {CARD_BG};
+    border-radius: 18px;
+    padding: 14px;
+    min-height: 80px;
+}}
+.kpi-b-label {{
+    font-size: 0.68rem;
+    color: #6b7280;
+    font-weight: 500;
+    margin-bottom: 6px;
+}}
+.kpi-b-value {{
+    font-size: 1.35rem;
+    font-weight: 500;
+    color: #111827;
+    line-height: 1;
+}}
+
+/* ── KPI Goal card ── */
+.kpi-goal-card {{
+    background: {INDIGO};
+    border-radius: 18px;
+    padding: 14px;
+    min-height: 80px;
+}}
+.kpi-goal-label {{
+    font-size: 0.68rem;
+    color: #c4c8e6;
+    font-weight: 500;
+    margin-bottom: 6px;
+}}
+.kpi-goal-row {{
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-bottom: 8px;
+}}
+.kpi-goal-value {{
+    font-size: 1.35rem;
+    font-weight: 500;
+    color: white;
+    line-height: 1;
+}}
+.kpi-goal-total {{
+    font-size: 0.75rem;
+    color: #c4c8e6;
+}}
+.kpi-goal-bar-bg {{
+    background: rgba(255,255,255,0.25);
+    border-radius: 999px;
+    height: 4px;
+    overflow: hidden;
+}}
+.kpi-goal-bar-fill {{
+    background: {YELLOW};
+    border-radius: 999px;
+    height: 4px;
+}}
+
+/* ── Section card (tickets list) ── */
+.section-card {{
+    background: {CARD_BG};
+    border-radius: 20px;
+    padding: 18px 18px 10px;
+    margin-top: 14px;
+}}
+.section-card-title {{
+    font-size: 1rem;
+    font-weight: 500;
+    color: #111827;
+    margin-bottom: 14px;
+}}
+.section-card-count {{
+    color: #6b7280;
+    font-weight: 400;
+}}
+
+/* ── Member initials avatar ── */
+.mem-avatar {{
+    width: 24px; height: 24px;
+    border-radius: 8px;
+    background: {INDIGO};
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6rem;
+    font-weight: 500;
+    flex-shrink: 0;
+}}
+.mem-avatar-green  {{ background: {GREEN};   color: white; }}
+.mem-avatar-blue   {{ background: {BLUE};    color: white; }}
+.mem-avatar-red    {{ background: {RED};     color: white; }}
+.mem-avatar-yellow {{ background: {YELLOW};  color: #5a4400; }}
+
+/* ── Domain icon circle ── */
+.domain-circle {{
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: {GREEN};
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+}}
+
+/* ── Status badges (exact mockup colors) ── */
+.badge {{
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    white-space: nowrap;
+}}
+.badge-open           {{ background: #e1edfb; color: #1d4e8c; }}
+.badge-answered       {{ background: #d6f0d6; color: #1f6a1f; }}
+.badge-closed         {{ background: #d6f0d6; color: #1f6a1f; }}
+.badge-cancelled      {{ background: #fde0e0; color: #8a1f1f; }}
+.badge-not_a_question {{ background: #f0f0f0; color: #666;     }}
+
+/* ── Urgency pills (exact mockup colors) ── */
+.urg-pill {{ display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 500; white-space: nowrap; }}
+.urg-normal   {{ background: #e6f4e6; color: #1f6a1f; }}
+.urg-urgent   {{ background: #fdf3d4; color: #7a5f00; }}
+.urg-critical {{ background: #fde0e0; color: #8a1f1f; }}
+
+/* ── Assign pill ── */
+.assign-pill {{
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    background: #eef0f9;
+    color: {INDIGO};
+    white-space: nowrap;
+}}
+.assign-empty {{
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    background: white;
+    color: #6b7280;
+    border: 1px dashed #c4c8d4;
+    white-space: nowrap;
+}}
+
+/* ── Open ticket button ── */
+.open-btn {{
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: {INDIGO};
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    cursor: pointer;
+}}
+
+/* ── Table column headers ── */
+.tbl-header {{
+    font-size: 0.62rem;
+    font-weight: 500;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding-bottom: 8px;
+}}
+
+/* ── Buttons ── */
+button[data-testid="baseButton-primary"] {{
+    background-color: #7b82c9 !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 999px !important;
+    font-weight: 500 !important;
+}}
+button[data-testid="baseButton-primary"]:hover {{
+    background-color: {INDIGO} !important;
+}}
+button[data-testid="baseButton-secondary"] {{
+    background-color: #eef0fb !important;
+    color: {INDIGO} !important;
+    border: none !important;
+    border-radius: 999px !important;
+    font-weight: 500 !important;
+}}
+button[data-testid="baseButton-secondary"]:hover {{
+    background-color: #dde0f5 !important;
+}}
+
+/* ── Metric cards (reports tab) ── */
+[data-testid="metric-container"] {{
+    background: {CARD_BG};
+    border-left: 4px solid {INDIGO};
+    border-radius: 10px;
+    padding: 10px 14px !important;
+}}
+[data-testid="metric-container"] label {{
+    color: #6b7280 !important;
+    font-size: 0.8rem !important;
+}}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {{
+    color: #111827 !important;
+    font-weight: 500;
+}}
+
+/* ── Table header row ── */
+.tbl-header {{
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 4px 8px;
+    border-bottom: 1px solid #e8eef6;
+    margin-bottom: 6px;
 }}
 
 /* ── Dividers ── */
-hr {{
-    border-color: #e8eaf0 !important;
-}}
+hr {{ border-color: #e0e6f0 !important; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -170,22 +450,68 @@ URGENCY_ICON = {
     "critical": "🔴",
 }
 
+# ── Helpers ────────────────────────────────────────────────────────────────────
+def _initials(name: str) -> str:
+    parts = (name or "?").split()
+    return "".join(p[0].upper() for p in parts[:2]) if parts else "?"
+
+def _avatar_class(name: str) -> str:
+    colors = ["mem-avatar-green", "mem-avatar-blue", "mem-avatar-red", "mem-avatar-yellow", ""]
+    return colors[hash(name or "") % len(colors)]
+
+def kpi_card(label: str, value, icon_color: str) -> str:
+    """KPI Row A — icon top-left, label top-right, big value bottom."""
+    return f"""
+    <div class="kpi-card">
+      <div class="kpi-card-top">
+        <div class="kpi-icon" style="background:{icon_color}">●</div>
+        <div class="kpi-label">{label}</div>
+      </div>
+      <div class="kpi-value">{value:,}</div>
+    </div>"""
+
+def kpi_b_card(label: str, value) -> str:
+    """KPI Row B — plain label + value."""
+    return f"""
+    <div class="kpi-b-card">
+      <div class="kpi-b-label">{label}</div>
+      <div class="kpi-b-value">{value}</div>
+    </div>"""
+
+def goal_card(answered: int, goal: int) -> str:
+    pct = min(100, round(answered / goal * 100)) if goal > 0 else 0
+    return f"""
+    <div class="kpi-goal-card">
+      <div class="kpi-goal-label">Goal progress</div>
+      <div class="kpi-goal-row">
+        <div class="kpi-goal-value">{answered}</div>
+        <div class="kpi-goal-total">/ {goal}</div>
+      </div>
+      <div class="kpi-goal-bar-bg">
+        <div class="kpi-goal-bar-fill" style="width:{pct}%"></div>
+      </div>
+    </div>"""
+
+
 # ── Auth ───────────────────────────────────────────────────────────────────────
 if not st.user.is_logged_in:
-    # ── Login page ──────────────────────────────────────────────────────────────
     st.markdown(f"""
     <div style="
         display:flex; flex-direction:column; align-items:center;
         justify-content:center; min-height:70vh; gap:12px;
     ">
       <div style="
-          background:linear-gradient(135deg,{INDIGO} 0%,{BLUE} 100%);
-          color:white; border-radius:16px; padding:40px 56px;
-          text-align:center; max-width:420px; box-shadow:0 4px 24px rgba(74,82,163,0.18);
+          background:{CARD_BG}; border-radius:24px;
+          padding:44px 56px; text-align:center; max-width:420px;
+          box-shadow:0 4px 24px rgba(74,82,163,0.13);
       ">
-        <div style="font-size:3rem; margin-bottom:8px;">🎯</div>
-        <h2 style="margin:0 0 6px; color:white; font-size:1.6rem;">Lesko Help Desk</h2>
-        <p style="opacity:0.85; font-size:0.9rem; margin:0 0 28px;">
+        <div style="
+            width:64px; height:64px; border-radius:16px; background:{INDIGO};
+            display:inline-flex; align-items:center; justify-content:center;
+            font-size:2rem; color:white; font-weight:800; margin-bottom:16px;
+        ">L</div>
+        <h2 style="margin:0 0 6px; color:#1a1a2e; font-size:1.5rem;">Lesko Help Desk</h2>
+        <p style="color:#999; font-size:0.9rem; margin:0 0 28px;">
           Grant support queue — team access only
         </p>
       </div>
@@ -200,6 +526,12 @@ if not st.user.is_logged_in:
             use_container_width=True,
             type="primary",
         )
+        st.button(
+            "Sign in with email",
+            on_click=st.login,
+            args=("auth0",),
+            use_container_width=True,
+        )
     st.stop()
 
 user         = st.user
@@ -209,45 +541,40 @@ current_user = user.email or user.name or ""
 if "member_id_filter" not in st.session_state:
     st.session_state.member_id_filter = ""
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# ── Sidebar (user account + filters) ──────────────────────────────────────────
 with st.sidebar:
-    # User account block
+    # User account
     avatar_url = getattr(user, "picture", None)
     name       = getattr(user, "name",    None) or current_user
     email      = getattr(user, "email",   None) or ""
 
-    if avatar_url:
-        ac1, ac2 = st.columns([1, 3])
-        ac1.image(avatar_url, width=40)
-        ac2.markdown(f"**{name}**")
-        ac2.caption(email)
-    else:
-        st.markdown(f"**{name}**")
-        st.caption(email)
+    st.markdown(f"""
+    <div style="display:flex; align-items:center; gap:10px; padding:4px 0 12px;">
+      <div class="mem-avatar {_avatar_class(name)}">{_initials(name)}</div>
+      <div>
+        <div style="font-weight:700; font-size:0.9rem; color:#1a1a2e;">{name}</div>
+        <div style="font-size:0.72rem; color:#999;">{email}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     if st.button("Sign out", use_container_width=True):
         st.logout()
 
     st.divider()
-    st.markdown("### 🎯 Lesko Help Desk")
 
-    st.divider()
-    st.subheader("Filters")
+    # ── Filters ───────────────────────────────────────────────────────────────
+    st.markdown('<p style="font-size:0.72rem;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Filters</p>', unsafe_allow_html=True)
 
     today = datetime.date.today()
 
-    def filter_row(label):
-        a, b = st.columns([1, 2])
-        a.markdown(f"**{label}**")
-        return b
-
-    # 1. Status (feedback statuses live in the Train AI tab, not here)
+    # 1. Status
     _status_opts = ["All"] + config.TICKET_STATUSES
-    filter_status = filter_row("Status").selectbox(
-        "Status", _status_opts,
+    filter_status = st.selectbox(
+        "Status",
+        _status_opts,
         index=_status_opts.index("open"),
         format_func=lambda s: s if s == "All" else s.replace("_", " ").title(),
-        label_visibility="collapsed",
     )
 
     # 2. Date range
@@ -278,30 +605,32 @@ with st.sidebar:
 
     # 3. Assigned To
     team_members = bq_client.get_team_members()
-    filter_assignee = filter_row("Assigned To").selectbox(
-        "Assigned To", ["All"] + team_members,
-        label_visibility="collapsed",
+    filter_assignee = st.selectbox(
+        "Grant Coach",
+        ["All"] + team_members,
     )
 
     # 4. Member ID
-    filter_member_id = filter_row("Member ID").text_input(
-        "Member ID", value=st.session_state.member_id_filter,
-        label_visibility="collapsed",
+    filter_member_id = st.text_input(
+        "Member ID",
+        value=st.session_state.member_id_filter,
     )
 
-    # 5. Urgency
-    filter_urgency = filter_row("Urgency").selectbox(
-        "Urgency", ["All", "Normal", "Urgent", "Critical"],
-        label_visibility="collapsed",
+    # 5. Urgency (pill buttons)
+    filter_urgency = st.pills(
+        "Urgency",
+        options=["All", "Normal", "Urgent", "Critical"],
+        default="All",
     )
 
     # 6. Domain
-    filter_domain = filter_row("Domain").selectbox(
-        "Domain", ["All"] + config.DOMAINS,
-        label_visibility="collapsed",
+    filter_domain = st.selectbox(
+        "Domain",
+        ["All"] + config.DOMAINS,
     )
 
-    if st.button("🔄 Refresh", use_container_width=True):
+    st.divider()
+    if st.button("🔄 Refresh data", use_container_width=True, type="primary"):
         st.cache_data.clear()
         st.rerun()
 
@@ -406,12 +735,12 @@ def show_ticket_dialog(content_id: str):
             format_func=lambda s: f"{STATUS_ICON.get(s, '')} {s.replace('_', ' ').title()}",
         )
     with c2:
-        assignee_options    = ["— unassigned —"] + team_members
-        current_assignee    = ticket.get("assigned_to") or "— unassigned —"
+        assignee_options = ["— unassigned —"] + team_members
+        current_assignee = ticket.get("assigned_to") or "— unassigned —"
         if current_assignee not in assignee_options:
             current_assignee = "— unassigned —"
         new_assignee = st.selectbox(
-            "Assigned To",
+            "Grant Coach",
             assignee_options,
             index=assignee_options.index(current_assignee),
             key=f"assignee_{content_id}",
@@ -421,9 +750,9 @@ def show_ticket_dialog(content_id: str):
     override_assignment = False
     if new_assignee != "— unassigned —" and can_edit:
         override_assignment = st.checkbox(
-            f"Set as permanent grant coach for **{ticket.get('member_name', 'this member')}**",
+            f"Set as permanent Grant Coach for **{ticket.get('member_name', 'this member')}**",
             value=False,
-            help="Overrides the automatic assignment rule — all future tickets from this member will go to this grant coach.",
+            help="Overrides the automatic assignment rule — all future tickets from this member will go to this Grant Coach.",
             key=f"override_{content_id}",
         )
 
@@ -440,8 +769,8 @@ def show_ticket_dialog(content_id: str):
 
     c3, c4 = st.columns(2)
     with c3:
-        domain_options  = ["— unset —"] + config.DOMAINS
-        current_domain  = ticket.get("domain") or "— unset —"
+        domain_options = ["— unset —"] + config.DOMAINS
+        current_domain = ticket.get("domain") or "— unset —"
         if current_domain not in domain_options:
             current_domain = "— unset —"
         new_domain = st.selectbox(
@@ -464,7 +793,7 @@ def show_ticket_dialog(content_id: str):
                     ticket["member_id"], assignee_val, current_user
                 )
             st.cache_data.clear()
-            st.success("Saved." if not override_assignment else "Saved — permanent grant coach updated.")
+            st.success("Saved." if not override_assignment else "Saved — permanent Grant Coach updated.")
             st.rerun()
     else:
         st.caption("⚠️ Ticket is closed — status locked.")
@@ -477,7 +806,6 @@ def show_ticket_dialog(content_id: str):
     if not _mn_key:
         st.warning("No Mighty Networks API key set. Add yours in the ⚙️ Settings tab.")
     else:
-        # Extract numeric post ID from content_id (e.g. "post_12345" → "12345")
         _post_id = (ticket.get("thread_id") or content_id).replace("post_", "")
         answer_body = st.text_area(
             "Answer", key=f"answer_{content_id}",
@@ -538,14 +866,12 @@ def show_ticket_dialog(content_id: str):
         use_container_width=True,
     )
 
-    # Call sheet stub
     with st.expander("📋 Call Sheet Report"):
         st.caption("Prompt template wiring coming soon.")
         st.text_input("State",  value=ticket.get("member_state") or "", disabled=True)
         st.text_input("Domain", value=ticket.get("domain") or "",       disabled=True)
         st.button("Generate Report", disabled=True, help="Coming soon", key=f"callsheet_{content_id}")
 
-    # Member history
     with st.expander(f"📋 Member history ({ticket.get('member_name', '')})"):
         history = bq_client.get_member_history(
             ticket["member_id"], exclude_content_id=ticket["content_id"]
@@ -559,19 +885,23 @@ def show_ticket_dialog(content_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TABS
+# PAGE HEADER
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown(f"""
-<div class="lesko-header">
-  <span style="font-size:1.8rem">🎯</span>
-  <div>
-    <h2>Lesko Help Desk</h2>
-    <div class="sub">Grant support queue — powered by Lesko community data</div>
+<div class="lesko-header-card">
+  <div class="header-logo">L</div>
+  <div style="flex:1;">
+    <span class="header-app-name">Lesko Help Desk</span>
+    <span class="header-sub">Grant support workspace</span>
+  </div>
+  <div class="header-user-pill">
+    <div class="header-user-avatar">{_initials(name)}</div>
+    <span class="header-user-name">{name.split()[0] if name else ''}</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-tab_main, tab_reports, tab_train, tab_settings = st.tabs(["🎫 Tickets", "📊 Reports", "🤖 Train AI", "⚙️ Settings"])
+tab_main, tab_reports, tab_train, tab_settings, tab_admin = st.tabs(["🎫 Tickets", "📊 Reports", "🤖 Train AI", "⚙️ Settings", "👥 Admin"])
 
 
 # ── MAIN TAB ──────────────────────────────────────────────────────────────────
@@ -584,91 +914,90 @@ with tab_main:
     open_stats  = load_open_stats()
     daily_stats = load_daily_stats()
 
-    # KPI Row A — open breakdown
+    # ── KPI Row A ─────────────────────────────────────────────────────────────
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("🔵 Open",     int(open_stats.get("open",     0)))
-    a2.metric("🟢 Normal",   int(open_stats.get("normal",   0)))
-    a3.metric("🟡 Urgent",   int(open_stats.get("urgent",   0)))
-    a4.metric("🔴 Critical", int(open_stats.get("critical", 0)))
+    a1.markdown(kpi_card("Open",     int(open_stats.get("open",     0)), "#2d6ee0"), unsafe_allow_html=True)
+    a2.markdown(kpi_card("Normal",   int(open_stats.get("normal",   0)), "#2e9b2e"), unsafe_allow_html=True)
+    a3.markdown(kpi_card("Urgent",   int(open_stats.get("urgent",   0)), "#f5c520"), unsafe_allow_html=True)
+    a4.markdown(kpi_card("Critical", int(open_stats.get("critical", 0)), "#e03c3c"), unsafe_allow_html=True)
 
-    # KPI Row B — daily productivity
+    # ── KPI Row B ─────────────────────────────────────────────────────────────
     answered_today = int(daily_stats.get("answered_today", 0))
     goal           = int(daily_stats.get("goal", config.DAILY_GOAL))
     b1, b2, b3, b4 = st.columns(4)
-    b1.metric("📥 In today",       int(daily_stats.get("in_today",   0)))
-    b2.metric("✅ Answered today",  answered_today)
-    b3.metric("📈 Daily avg (30d)", daily_stats.get("daily_avg",     0))
-    b4.metric("🎯 Goal progress",  f"{answered_today} / {goal}")
+    b1.markdown(kpi_b_card("In today",        int(daily_stats.get("in_today", 0))),   unsafe_allow_html=True)
+    b2.markdown(kpi_b_card("Answered today",  answered_today),                         unsafe_allow_html=True)
+    b3.markdown(kpi_b_card("Daily avg (30d)", daily_stats.get("daily_avg", 0)),        unsafe_allow_html=True)
+    b4.markdown(goal_card(answered_today, goal),                                       unsafe_allow_html=True)
 
-    st.divider()
-
-    # Ticket table
-    st.subheader(f"Tickets ({len(tickets)})")
+    # ── Ticket list ───────────────────────────────────────────────────────────
+    st.markdown(f'<div class="section-card"><div class="section-card-title">Tickets ({len(tickets)})</div>', unsafe_allow_html=True)
 
     if tickets.empty:
         st.info("No tickets match the current filters.")
     else:
-        # Table header
-        h0, h1, h2, h3, h4, h5, h6, h7 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.2, 0.5, 0.4])
+        # Table header — no separate Grant Coach column; initials avatar IS the dropdown
+        h0, h1, h2, h3, h4, h5, h6 = st.columns([0.7, 1.5, 3.5, 1, 1.1, 0.4, 0.35])
         for col, label in zip(
-            [h0, h1, h2, h3, h4, h5, h6, h7],
-            ["Timestamp", "Member", "Question", "Assigned To", "Urgency", "Status", "Link", ""],
+            [h0, h1, h2, h3, h4, h5, h6],
+            ["Coach", "Member", "Question", "Urgency", "Status", "Link", ""],
         ):
-            col.markdown(f"**{label}**")
-
-        st.divider()
-
-        def _save_quick_assignee(content_id):
-            new_val = st.session_state[f"quick_assignee_{content_id}"]
-            assignee_val = "" if new_val == "— unassigned —" else new_val
-            bq_client.set_ticket_assignee(content_id, assignee_val)
-            st.cache_data.clear()
+            col.markdown(f'<span class="tbl-header">{label}</span>', unsafe_allow_html=True)
 
         for _, row in tickets.iterrows():
-            c0, c1, c2, c3, c4, c5, c6, c7 = st.columns([1.4, 1.5, 3, 1.5, 1.1, 1.2, 0.5, 0.4])
+            c0, c1, c2, c3, c4, c5, c6 = st.columns([0.7, 1.5, 3.5, 1, 1.1, 0.4, 0.35])
 
-            c0.caption(str(row["created_at"])[:16])
+            # Grant Coach initials — plain text
+            _current_assignee = row.get("assigned_to") or ""
+            _initials_display = _initials(_current_assignee) if _current_assignee else "·"
+            c0.markdown(f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">{_initials_display}</div>', unsafe_allow_html=True)
 
-            # Member name — clicking fills the member ID filter
+            # Member name button + timestamp
+            mem_name = row["member_name"] or "Unknown"
             if c1.button(
-                row["member_name"] or "Unknown",
+                mem_name,
                 key=f"member_{row['content_id']}",
                 use_container_width=True,
             ):
                 st.session_state.member_id_filter = str(row["member_id"])
                 st.rerun()
+            c1.caption(str(row["created_at"])[:10])
 
+            # Domain icon + question preview
             domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
-            preview_text = str(row["body_preview"] or "")[:120]
-            c2.caption(f"{domain_icon} {preview_text}" if domain_icon else preview_text)
+            preview_text = str(row["body_preview"] or "")[:110]
+            if domain_icon:
+                c2.markdown(
+                    f'<span class="domain-circle">{domain_icon}</span> <small>{preview_text}</small>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                c2.caption(preview_text)
 
-            # Assignee dropdown — saves on change without opening the ticket dialog
-            _assignee_opts = ["— unassigned —"] + team_members
-            _current_assignee = row.get("assigned_to") or "— unassigned —"
-            if _current_assignee not in _assignee_opts:
-                _current_assignee = "— unassigned —"
-            c3.selectbox(
-                "Assigned To",
-                _assignee_opts,
-                index=_assignee_opts.index(_current_assignee),
-                key=f"quick_assignee_{row['content_id']}",
-                label_visibility="collapsed",
-                on_change=_save_quick_assignee,
-                args=(row["content_id"],),
-            )
+            # Urgency pill
             urg = (row.get("urgency") or "").lower()
-            urg_css = {"normal": "urg-normal", "urgent": "urg-urgent", "critical": "urg-critical"}.get(urg, "")
-            c4.markdown(f'<span class="{urg_css}">{URGENCY_ICON.get(urg, "⚪")} {urg.capitalize()}</span>', unsafe_allow_html=True)
+            c3.markdown(
+                f'<span class="urg-pill urg-{urg}">{urg.capitalize() or "—"}</span>',
+                unsafe_allow_html=True,
+            )
 
+            # Status badge
             status = (row.get("ticket_status") or "").lower()
-            c5.markdown(f'<span class="badge badge-{status}">{STATUS_ICON.get(status, "⚪")} {status.replace("_", " ").capitalize()}</span>', unsafe_allow_html=True)
+            c4.markdown(
+                f'<span class="badge badge-{status}">{status.replace("_", " ").capitalize()}</span>',
+                unsafe_allow_html=True,
+            )
 
+            # Permalink
             permalink = row.get("permalink") or ""
             if permalink:
-                c6.markdown(f"[🔗]({permalink})")
+                c5.markdown(f"[↗]({permalink})")
 
-            if c7.button("→", key=f"open_{row['content_id']}"):
+            # Open ticket button
+            if c6.button("→", key=f"open_{row['content_id']}"):
                 show_ticket_dialog(row["content_id"])
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ── REPORTS TAB ───────────────────────────────────────────────────────────────
@@ -685,7 +1014,6 @@ with tab_reports:
 
     st.divider()
 
-    # 12.1 Volume
     st.markdown("#### Volume — Tickets In vs Answered")
     vol = load_report("volume", str(r_date_from), str(r_date_to))
     if not vol.empty:
@@ -695,7 +1023,6 @@ with tab_reports:
 
     st.divider()
 
-    # 12.2 Response time
     st.markdown("#### Response Time")
     rt = load_report("response_time", str(r_date_from), str(r_date_to))
     if not rt.empty:
@@ -711,7 +1038,6 @@ with tab_reports:
 
     st.divider()
 
-    # 12.3 Team productivity
     st.markdown("#### Team Productivity — Tickets Closed")
     tp = load_report("team_productivity", str(r_date_from), str(r_date_to))
     if not tp.empty:
@@ -721,7 +1047,6 @@ with tab_reports:
 
     st.divider()
 
-    # 12.4 Domain breakdown
     st.markdown("#### Domain Breakdown")
     db = load_report("domain_breakdown", str(r_date_from), str(r_date_to))
     if not db.empty:
@@ -737,16 +1062,15 @@ with tab_reports:
 with tab_train:
     st.subheader("Train AI")
 
-    # Load queue into session state once; a manual reload clears it
     if "train_queue" not in st.session_state:
         with st.spinner("Loading review queue…"):
             q_df = bq_client.get_unreviewed_rejects()
             st.session_state.train_queue = q_df.to_dict("records")
             st.session_state.train_idx   = 0
 
-    queue   = st.session_state.train_queue
-    idx     = st.session_state.train_idx
-    total   = len(queue)
+    queue     = st.session_state.train_queue
+    idx       = st.session_state.train_idx
+    total     = len(queue)
     remaining = total - idx
 
     if remaining <= 0:
@@ -755,14 +1079,12 @@ with tab_train:
             del st.session_state["train_queue"]
             st.rerun()
     else:
-        # Progress bar
         st.progress(idx / total if total > 0 else 1.0)
         st.caption(f"{idx} reviewed · {remaining} remaining")
         st.divider()
 
         item = queue[idx]
 
-        # ── Engagement card ───────────────────────────────────────────────────
         meta1, meta2, meta3 = st.columns(3)
         meta1.markdown(f"**Member:** {item.get('member_name') or '—'}")
         meta2.markdown(f"**Type:** {(item.get('content_type') or '—').capitalize()}")
@@ -778,7 +1100,6 @@ with tab_train:
 
         st.divider()
 
-        # ── Decision buttons ──────────────────────────────────────────────────
         btn_incorrect, btn_correct = st.columns(2)
 
         if btn_incorrect.button(
@@ -803,7 +1124,6 @@ with tab_train:
 
 # ── SETTINGS TAB ──────────────────────────────────────────────────────────────
 with tab_settings:
-    # ── Mighty Networks API Key ───────────────────────────────────────────────
     st.subheader("Your Mighty Networks API Key")
     st.caption(
         "Required to post answers directly to Mighty Networks from the ticket dialog. "
@@ -857,17 +1177,16 @@ with tab_settings:
         current = prompt_history[prompt_history["is_current"] == True]
         past    = prompt_history[prompt_history["is_current"] == False]
 
-        # ── Current prompt ────────────────────────────────────────────────────
         st.markdown("### Current Prompt")
         if not current.empty:
             row = current.iloc[0]
             active_since = str(row["created_at"])[:10]
 
-            total   = int(row["total_classified"])
-            as_q    = int(row["classified_as_question"])
-            q_rate  = round(as_q / total * 100, 1) if total > 0 else 0
-            fp      = int(row["false_positives"])
-            cq      = int(row["confirmed_questions"])
+            total  = int(row["total_classified"])
+            as_q   = int(row["classified_as_question"])
+            q_rate = round(as_q / total * 100, 1) if total > 0 else 0
+            fp     = int(row["false_positives"])
+            cq     = int(row["confirmed_questions"])
 
             s1, s2, s3, s4, s5 = st.columns(5)
             s1.metric("Version",              f"v{int(row['version'])}")
@@ -885,7 +1204,6 @@ with tab_settings:
 
         st.divider()
 
-        # ── Prompt history ────────────────────────────────────────────────────
         st.markdown("### Prompt History")
         if past.empty:
             st.caption("No previous versions — this is the first prompt.")
@@ -908,3 +1226,80 @@ with tab_settings:
                         st.markdown(f"**Why it was replaced:** {row['change_reason']}")
                         st.divider()
                     st.code(row["prompt_text"], language=None)
+
+
+# ── ADMIN TAB ─────────────────────────────────────────────────────────────────
+with tab_admin:
+    _admin_api_key = st.secrets.get("mn_admin_api_key", "")
+
+    st.subheader("Grant Coaches")
+    st.caption("Coaches listed here appear as assignees in the ticket list. Promoting a member to coach also gives them host role in Mighty Networks so they can generate their own API key.")
+
+    @st.cache_data(ttl=60)
+    def load_coaches():
+        return bq_client.get_grant_coaches()
+
+    coaches_df = load_coaches()
+
+    if not coaches_df.empty:
+        for _, coach in coaches_df.iterrows():
+            cc1, cc2, cc3 = st.columns([3, 2, 0.8])
+            cc1.markdown(f"**{coach['full_name']}**")
+            cc2.caption(coach.get("email") or "")
+            if cc3.button("Remove", key=f"remove_coach_{coach['member_id']}"):
+                bq_client.remove_grant_coach(int(coach["member_id"]))
+                st.cache_data.clear()
+                st.rerun()
+    else:
+        st.info("No grant coaches added yet.")
+
+    st.divider()
+    st.markdown("#### Add a Grant Coach")
+
+    @st.cache_data(ttl=30, show_spinner=False)
+    def _search(q):
+        return bq_client.search_members(q)
+
+    search_query = st.text_input("Search member by name or email", placeholder="e.g. Jane Smith")
+
+    _q = search_query.strip()
+    if len(_q) >= 2:
+        results = _search(_q)
+
+        if results.empty:
+            st.caption("No members found — try a different name or email.")
+        else:
+            for _, member in results.iterrows():
+                m1, m2, m3 = st.columns([3, 2.5, 1.2])
+                m1.markdown(f"**{member['full_name']}**")
+                m2.caption(member.get("email_address") or "")
+
+                if m3.button("Make Coach", key=f"promote_{member['member_id']}", type="primary"):
+                    if not _admin_api_key:
+                        st.error("No MN admin API key configured. Add `mn_admin_api_key` to secrets.toml.")
+                    else:
+                        try:
+                            bq_client.mn_promote_to_host(int(member["member_id"]), _admin_api_key)
+                            bq_client.add_grant_coach(
+                                member_id=int(member["member_id"]),
+                                full_name=str(member["full_name"]),
+                                email=str(member.get("email_address") or ""),
+                                added_by=current_user or "admin",
+                            )
+                            st.cache_data.clear()
+                            st.session_state["invite_name"] = str(member["full_name"])
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
+
+    if "invite_name" in st.session_state:
+        @st.dialog(f"Invite {st.session_state['invite_name']}")
+        def _invite_dialog():
+            app_url = st.secrets.get("app_url", "https://grant-helpdesk-170880920649.europe-west1.run.app")
+            st.markdown("Share this link with the new grant coach:")
+            st.code(app_url, language=None)
+            st.caption("They can sign in with email/password or Google. On first login they'll be prompted to add their MN API key.")
+            if st.button("Done", use_container_width=True):
+                del st.session_state["invite_name"]
+                st.rerun()
+        _invite_dialog()
