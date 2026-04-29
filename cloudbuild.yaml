@@ -1,0 +1,36 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -t
+      - europe-west1-docker.pkg.dev/bigtribebuilders/grant-helpdesk/app:$COMMIT_SHA
+      - -t
+      - europe-west1-docker.pkg.dev/bigtribebuilders/grant-helpdesk/app:latest
+      - .
+
+  # Push both tags
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [push, europe-west1-docker.pkg.dev/bigtribebuilders/grant-helpdesk/app:$COMMIT_SHA]
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [push, europe-west1-docker.pkg.dev/bigtribebuilders/grant-helpdesk/app:latest]
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - grant-helpdesk
+      - --image=europe-west1-docker.pkg.dev/bigtribebuilders/grant-helpdesk/app:$COMMIT_SHA
+      - --region=europe-west1
+      - --project=bigtribebuilders
+      - --set-secrets=/app/.streamlit/secrets.toml=streamlit-secrets:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - europe-west1-docker.pkg.dev/bigtribebuilders/grant-helpdesk/app:$COMMIT_SHA
+  - europe-west1-docker.pkg.dev/bigtribebuilders/grant-helpdesk/app:latest
