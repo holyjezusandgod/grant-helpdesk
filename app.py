@@ -18,6 +18,12 @@ ROW_BG  = "#f7f9fc"
 
 st.markdown(f"""
 <style>
+/* ── Global font ── */
+html, body, .stApp, .stApp * {{
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif !important;
+    font-size: 14px;
+}}
+
 /* ── Global background ── */
 .stApp {{
     background-color: {BG} !important;
@@ -156,34 +162,35 @@ button[data-baseweb="tab"][aria-selected="true"] {{
 .kpi-card {{
     background: {CARD_BG};
     border-radius: 18px;
-    padding: 14px;
-    min-height: 88px;
+    padding: 20px 22px;
+    min-height: 110px;
+    margin-bottom: 4px;
 }}
 .kpi-card-top {{
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 10px;
+    margin-bottom: 14px;
 }}
 .kpi-icon {{
-    width: 32px; height: 32px;
+    width: 38px; height: 38px;
     border-radius: 50%;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     color: white;
-    font-size: 0.85rem;
+    font-size: 1rem;
     font-weight: 500;
     flex-shrink: 0;
 }}
 .kpi-label {{
-    font-size: 0.68rem;
+    font-size: 0.82rem;
     color: #6b7280;
     font-weight: 500;
 }}
 .kpi-value {{
-    font-size: 1.6rem;
-    font-weight: 500;
+    font-size: 2.4rem;
+    font-weight: 600;
     color: #111827;
     line-height: 1;
 }}
@@ -192,18 +199,19 @@ button[data-baseweb="tab"][aria-selected="true"] {{
 .kpi-b-card {{
     background: {CARD_BG};
     border-radius: 18px;
-    padding: 14px;
-    min-height: 80px;
+    padding: 20px 22px;
+    min-height: 100px;
+    margin-bottom: 4px;
 }}
 .kpi-b-label {{
-    font-size: 0.68rem;
+    font-size: 0.82rem;
     color: #6b7280;
     font-weight: 500;
     margin-bottom: 6px;
 }}
 .kpi-b-value {{
-    font-size: 1.35rem;
-    font-weight: 500;
+    font-size: 2rem;
+    font-weight: 600;
     color: #111827;
     line-height: 1;
 }}
@@ -212,24 +220,25 @@ button[data-baseweb="tab"][aria-selected="true"] {{
 .kpi-goal-card {{
     background: {INDIGO};
     border-radius: 18px;
-    padding: 14px;
-    min-height: 80px;
+    padding: 20px 22px;
+    min-height: 100px;
+    margin-bottom: 4px;
 }}
 .kpi-goal-label {{
-    font-size: 0.68rem;
+    font-size: 0.82rem;
     color: #c4c8e6;
     font-weight: 500;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
 }}
 .kpi-goal-row {{
     display: flex;
     align-items: baseline;
     gap: 4px;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
 }}
 .kpi-goal-value {{
-    font-size: 1.35rem;
-    font-weight: 500;
+    font-size: 2rem;
+    font-weight: 600;
     color: white;
     line-height: 1;
 }}
@@ -302,7 +311,7 @@ button[data-baseweb="tab"][aria-selected="true"] {{
     display: inline-block;
     padding: 4px 8px;
     border-radius: 999px;
-    font-size: 0.68rem;
+    font-size: 0.875rem;
     font-weight: 500;
     white-space: nowrap;
 }}
@@ -313,7 +322,7 @@ button[data-baseweb="tab"][aria-selected="true"] {{
 .badge-not_a_question {{ background: #f0f0f0; color: #666;     }}
 
 /* ── Urgency pills (exact mockup colors) ── */
-.urg-pill {{ display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 500; white-space: nowrap; }}
+.urg-pill {{ display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 0.875rem; font-weight: 500; white-space: nowrap; }}
 .urg-normal   {{ background: #e6f4e6; color: #1f6a1f; }}
 .urg-urgent   {{ background: #fdf3d4; color: #7a5f00; }}
 .urg-critical {{ background: #fde0e0; color: #8a1f1f; }}
@@ -676,43 +685,79 @@ def show_ticket_dialog(content_id: str):
     content_type = ticket.get("content_type") or "—"
     domain_icon  = DOMAIN_ICON.get(ticket.get("domain") or "", "")
 
-    # Header
-    st.subheader(
-        f"{status_icon} {ticket.get('member_name', 'Unknown')}  "
-        f"{urgency_icon} {(ticket.get('urgency') or '').capitalize()}  "
-        f"· `{content_type}`"
-        + (f"  {domain_icon} {ticket.get('domain')}" if domain_icon else "")
-    )
+    # Header card
+    _urg        = (ticket.get("urgency") or "normal").lower()
+    _urg_colors = {"normal": ("#d6f0d6","#1f6a1f"), "urgent": ("#fdf3d4","#7a5f00"), "critical": ("#fde0e0","#8a1f1f")}
+    _urg_bg, _urg_fg = _urg_colors.get(_urg, _urg_colors["normal"])
+    _status     = (ticket.get("ticket_status") or "open").lower()
+    _domain_str = f"{domain_icon} {ticket.get('domain')}" if domain_icon else ""
+    _permalink  = ticket.get("member_permalink") or ""
+    _state      = ticket.get("member_state") or "—"
+    _city       = ticket.get("member_city") or "—"
+    _mid        = ticket.get("member_id") or "—"
+    _posted     = str(ticket.get("created_at", "—"))[:16]
 
-    # Metadata
-    m1, m2, m3, m4 = st.columns(4)
-    m1.markdown(f"**State:** {ticket.get('member_state') or '—'}")
-    m2.markdown(f"**City:** {ticket.get('member_city') or '—'}")
-    m3.markdown(f"**Member ID:** {ticket.get('member_id') or '—'}")
-    m4.markdown(f"**Posted:** {str(ticket.get('created_at', '—'))[:16]}")
-    st.markdown(f"[MightyNetworks Profile ↗]({ticket.get('member_permalink', '')})")
-
-    st.divider()
+    st.markdown(f"""
+<div style="margin:-1rem -1rem 0 -1rem;padding:16px 20px 14px;background:#f7f9fc;border-bottom:1px solid #e8eef6;">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+    <span style="font-size:1.1rem;font-weight:700;color:#1a1a2e">{ticket.get('member_name','Unknown')}</span>
+    <span class="badge badge-{_status}">{_status.replace('_',' ').capitalize()}</span>
+    <span style="background:{_urg_bg};color:{_urg_fg};padding:3px 9px;border-radius:999px;font-size:0.68rem;font-weight:500">{_urg.capitalize()}</span>
+    <span style="font-size:0.78rem;color:#6b7280">{content_type}</span>
+    {f'<span style="font-size:0.78rem;color:#6b7280">{_domain_str}</span>' if _domain_str else ""}
+    {f'<a href="{_permalink}" target="_blank" style="margin-left:auto;font-size:0.75rem;color:{INDIGO};text-decoration:none">↗ MN Profile</a>' if _permalink else ""}
+  </div>
+  <div style="display:flex;gap:24px;flex-wrap:wrap">
+    <span style="font-size:0.75rem;color:#6b7280"><span style="font-weight:600;color:#374151">State</span>&nbsp; {_state}</span>
+    <span style="font-size:0.75rem;color:#6b7280"><span style="font-weight:600;color:#374151">City</span>&nbsp; {_city}</span>
+    <span style="font-size:0.75rem;color:#6b7280"><span style="font-weight:600;color:#374151">Member ID</span>&nbsp; {_mid}</span>
+    <span style="font-size:0.75rem;color:#6b7280"><span style="font-weight:600;color:#374151">Posted</span>&nbsp; {_posted}</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
     # Full thread
     thread_id = ticket.get("thread_id") or content_id
-    st.markdown("**Thread**")
     with st.spinner("Loading thread…"):
         thread = bq_client.get_thread(thread_id)
 
-    with st.container(height=380):
-        for _, item in thread.iterrows():
-            is_current = item["content_id"] == content_id
-            role = "assistant" if item["author_type"] == "team" else "user"
-            indent = "　" * (int(item["depth"]) - 1) if int(item["depth"]) > 1 else ""
-            with st.chat_message(role):
-                label = f"{indent}**{item['author_name']}** · {str(item['created_at'])[:16]}"
-                if is_current:
-                    label += " 📌 *this ticket*"
-                st.markdown(label)
-                st.markdown(item["body"] or "_(empty)_")
-                if item.get("permalink"):
-                    st.markdown(f"[↗ View]({item['permalink']})")
+    if not thread.empty:
+        # ── Root post ─────────────────────────────────────────────────────────
+        root = thread[thread["content_type"] == "post"]
+        if not root.empty:
+            r = root.iloc[0]
+            is_ticket = r["content_id"] == content_id
+            st.markdown("**Original Post**")
+            st.markdown(f"""
+<div style="background:#f0f4ff;border-left:4px solid {INDIGO};border-radius:12px;padding:14px 16px;margin-bottom:16px">
+  <div style="font-weight:700;font-size:0.95rem;color:#1a1a2e;margin-bottom:2px">
+    {r['author_name']}
+    {"&nbsp;<span style='font-size:0.72rem;background:#4a52a3;color:white;padding:2px 7px;border-radius:999px'>this ticket</span>" if is_ticket else ""}
+  </div>
+  <div style="font-size:0.72rem;color:#6b7280;margin-bottom:10px">{str(r['created_at'])[:16]}</div>
+  <div style="font-size:0.9rem;color:#111827;line-height:1.55">{r['body'] or '<em>empty</em>'}</div>
+  {"<div style='margin-top:8px'><a href='" + r['permalink'] + "' target='_blank' style='font-size:0.75rem;color:#4a52a3'>↗ View on Mighty Networks</a></div>" if r.get('permalink') else ""}
+</div>
+""", unsafe_allow_html=True)
+
+        # ── Comments ──────────────────────────────────────────────────────────
+        comments = thread[thread["content_type"] == "comment"]
+        if not comments.empty:
+            st.markdown(f"**Comments ({len(comments)})**")
+            for _, item in comments.iterrows():
+                is_current = item["content_id"] == content_id
+                is_team    = item["author_type"] == "team"
+                depth      = int(item.get("depth") or 1)
+                indent_px  = (depth - 1) * 20
+                role = "assistant" if is_team else "user"
+                with st.chat_message(role):
+                    label = f"{'　' * (depth - 1)}**{item['author_name']}** · {str(item['created_at'])[:16]}"
+                    if is_current:
+                        label += " 📌 *this ticket*"
+                    st.markdown(label)
+                    st.markdown(item["body"] or "_(empty)_")
+                    if item.get("permalink"):
+                        st.markdown(f"[↗ View]({item['permalink']})")
 
     st.divider()
 
@@ -794,7 +839,6 @@ def show_ticket_dialog(content_id: str):
                 )
             st.cache_data.clear()
             st.success("Saved." if not override_assignment else "Saved — permanent Grant Coach updated.")
-            st.rerun()
     else:
         st.caption("⚠️ Ticket is closed — status locked.")
 
@@ -809,15 +853,15 @@ def show_ticket_dialog(content_id: str):
         _post_id = (ticket.get("thread_id") or content_id).replace("post_", "")
         answer_body = st.text_area(
             "Answer", key=f"answer_{content_id}",
-            label_visibility="collapsed", height=120,
+            label_visibility="collapsed", height=180,
         )
         if st.button("Post Answer to MN", key=f"post_answer_{content_id}", type="primary"):
             if answer_body.strip():
                 try:
                     bq_client.post_mn_comment(_post_id, answer_body.strip(), _mn_key)
-                    st.success("Answer posted to Mighty Networks.")
+                    st.session_state[f"answer_{content_id}"] = ""
                     st.cache_data.clear()
-                    st.rerun()
+                    st.success("Answer posted to Mighty Networks.")
                 except Exception as e:
                     st.error(f"Failed to post: {e}")
             else:
@@ -841,13 +885,13 @@ def show_ticket_dialog(content_id: str):
         st.warning("Set the `LESKO_USER` env var to post comments.")
     else:
         comment_body = st.text_area(
-            "Comment", key=f"comment_{content_id}", label_visibility="collapsed"
+            "Comment", key=f"comment_{content_id}", label_visibility="collapsed", height=140,
         )
         if st.button("Post Comment", key=f"post_comment_{content_id}"):
             if comment_body.strip():
                 bq_client.post_comment(content_id, current_user, comment_body.strip())
+                st.session_state[f"comment_{content_id}"] = ""
                 st.success("Comment posted.")
-                st.rerun()
             else:
                 st.warning("Comment cannot be empty.")
 
@@ -921,6 +965,7 @@ with tab_main:
     a3.markdown(kpi_card("Urgent",   int(open_stats.get("urgent",   0)), "#f5c520"), unsafe_allow_html=True)
     a4.markdown(kpi_card("Critical", int(open_stats.get("critical", 0)), "#e03c3c"), unsafe_allow_html=True)
 
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     # ── KPI Row B ─────────────────────────────────────────────────────────────
     answered_today = int(daily_stats.get("answered_today", 0))
     goal           = int(daily_stats.get("goal", config.DAILY_GOAL))
@@ -931,7 +976,7 @@ with tab_main:
     b4.markdown(goal_card(answered_today, goal),                                       unsafe_allow_html=True)
 
     # ── Ticket list ───────────────────────────────────────────────────────────
-    st.markdown(f'<div class="section-card"><div class="section-card-title">Tickets ({len(tickets)})</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-card-title" style="padding:6px 0 10px">Tickets ({len(tickets)})</div>', unsafe_allow_html=True)
 
     if tickets.empty:
         st.info("No tickets match the current filters.")
