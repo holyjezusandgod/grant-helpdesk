@@ -929,6 +929,177 @@ def show_ticket_dialog(content_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GROUP DIALOG — multiple comments from same member in same thread
+# ══════════════════════════════════════════════════════════════════════════════
+@st.dialog("Member Thread", width="large")
+def show_group_dialog(thread_id: str, member_id: str, member_name: str):
+    _OPEN = {"open", "new", "assigned"}
+    _URG_COLORS = {
+        "normal":   ("#d6f0d6", "#1f6a1f"),
+        "urgent":   ("#fdf3d4", "#7a5f00"),
+        "critical": ("#fde0e0", "#8a1f1f"),
+    }
+
+    group_tix = bq_client.get_member_thread_tickets(thread_id, member_id)
+    if group_tix.empty:
+        st.warning("No tickets found.")
+        return
+
+    open_tix = group_tix[group_tix["ticket_status"].isin(_OPEN)]
+    done_tix = group_tix[~group_tix["ticket_status"].isin(_OPEN)]
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown(f"""
+<div style="margin:-1rem -1rem 0 -1rem;padding:14px 20px 12px;background:#f7f9fc;border-bottom:1px solid #e8eef6">
+  <span style="font-size:1.05rem;font-weight:700;color:#1a1a2e">{member_name}</span>
+  <span style="font-size:0.8rem;color:#6b7280;margin-left:10px">{len(open_tix)} open comment{"s" if len(open_tix) != 1 else ""} · {len(done_tix)} handled</span>
+</div>
+""", unsafe_allow_html=True)
+
+    # ── Original post (context) ───────────────────────────────────────────────
+    with st.spinner("Loading thread…"):
+        thread = bq_client.get_thread(thread_id)
+
+    # ── Full thread ───────────────────────────────────────────────────────────
+    if not thread.empty:
+        # Collect content_ids that belong to this member's open tickets
+        _open_ids = set(open_tix["content_id"].tolist())
+
+        with st.expander("📄 Full thread", expanded=True):
+            with st.container(height=340):
+                for _, item in thread.iterrows():
+                    is_member_ticket = item["content_id"] in _open_ids
+                    is_team = item["author_type"] == "team"
+                    depth   = int(item.get("depth") or 0)
+                    role    = "assistant" if is_team else "user"
+                    with st.chat_message(role):
+                        label = f"{'　' * depth}**{item['author_name']}** · {str(item['created_at'])[:16]}"
+                        if is_member_ticket:
+                            label += " 📌 *open ticket*"
+                        st.markdown(label)
+                        st.markdown(item["body"] or "_(empty)_")
+                        if item.get("permalink"):
+                            st.markdown(f"[↗ View]({item['permalink']})")
+
+    st.divider()
+
+    # ── Open comments ─────────────────────────────────────────────────────────
+    if open_tix.empty:
+        st.info("All comments in this thread are already handled.")
+    else:
+        all_statuses = config.TICKET_STATUSES + config.FEEDBACK_STATUSES
+        _assignee_opts = ["— unassigned —"] + team_members
+        _domain_opts   = ["— unset —"] + config.DOMAINS
+
+        # Bulk controls
+        st.markdown(f"**Apply to all {len(open_tix)} open comments**")
+        bc1, bc2, bc3 = st.columns(3)
+        bulk_status = bc1.selectbox(
+            "Status", all_statuses,
+            key=f"bulk_status_{thread_id}_{member_id}",
+            format_func=lambda s: f"{STATUS_ICON.get(s,'')} {s.replace('_',' ').title()}",
+        )
+        bulk_coach = bc2.selectbox(
+            "Grant Coach", _assignee_opts,
+            key=f"bulk_coach_{thread_id}_{member_id}",
+        )
+        bulk_domain = bc3.selectbox(
+            "Domain", _domain_opts,
+            key=f"bulk_domain_{thread_id}_{member_id}",
+        )
+        if st.button("💾 Save to all open comments", type="primary", key=f"bulk_save_{thread_id}_{member_id}"):
+            _av = "" if bulk_coach  == "— unassigned —" else bulk_coach
+            _dv = "" if bulk_domain == "— unset —"      else bulk_domain
+            for _, t in open_tix.iterrows():
+                bq_client.update_ticket_meta(t["content_id"], bulk_status, _av, _dv)
+            st.cache_data.clear()
+            st.success(f"Saved {len(open_tix)} comments.")
+
+        st.divider()
+
+        # Individual open comments
+        st.markdown(f"**Open comments ({len(open_tix)})**")
+        for _, t in open_tix.iterrows():
+            urg = (t.get("urgency") or "normal").lower()
+            urg_bg, urg_fg = _URG_COLORS.get(urg, _URG_COLORS["normal"])
+            st.markdown(f"""
+<div style="background:#fff;border:1px solid #e8eef6;border-radius:12px;padding:12px 14px;margin-bottom:6px">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <span class="badge badge-open">open</span>
+    <span style="background:{urg_bg};color:{urg_fg};padding:2px 8px;border-radius:999px;font-size:0.68rem;font-weight:500">{urg.capitalize()}</span>
+    <span style="font-size:0.72rem;color:#9ca3af">{str(t['created_at'])[:16]}</span>
+    {f'<a href="{t["permalink"]}" target="_blank" style="margin-left:auto;font-size:0.72rem;color:{INDIGO};text-decoration:none">↗</a>' if t.get("permalink") else ""}
+  </div>
+  <div style="font-size:0.88rem;color:#111827;line-height:1.55">{t.get("body_preview") or "<em>(empty)</em>"}</div>
+</div>""", unsafe_allow_html=True)
+
+            with st.expander("Reply & settings for this comment"):
+                # ── Post answer to MN ──────────────────────────────────────
+                _mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
+                if _mn_key:
+                    _pid = thread_id.replace("post_", "")
+                    ans = st.text_area(
+                        "Post Answer to Mighty Networks",
+                        key=f"grp_ans_{t['content_id']}",
+                        height=100,
+                        placeholder="Type your answer here…",
+                    )
+                    if st.button("Post Answer to MN", key=f"grp_post_{t['content_id']}", type="primary"):
+                        if ans.strip():
+                            try:
+                                bq_client.post_mn_comment(_pid, ans.strip(), _mn_key)
+                                st.session_state[f"grp_ans_{t['content_id']}"] = ""
+                                st.success("Answer posted to Mighty Networks.")
+                            except Exception as e:
+                                st.error(f"Failed: {e}")
+                        else:
+                            st.warning("Answer cannot be empty.")
+                else:
+                    st.caption("No MN API key — add yours in ⚙️ Settings.")
+
+                st.divider()
+
+                # ── Status & coach override ────────────────────────────────
+                ov1, ov2 = st.columns(2)
+                _cur_status = t.get("ticket_status") or "open"
+                _cur_status = _cur_status if _cur_status in all_statuses else "open"
+                _cur_coach  = t.get("assigned_to") or "— unassigned —"
+                if _cur_coach not in _assignee_opts:
+                    _cur_coach = "— unassigned —"
+                ov_status = ov1.selectbox(
+                    "Status", all_statuses,
+                    index=all_statuses.index(_cur_status),
+                    key=f"ov_status_{t['content_id']}",
+                    format_func=lambda s: f"{STATUS_ICON.get(s,'')} {s.replace('_',' ').title()}",
+                )
+                ov_coach = ov2.selectbox(
+                    "Grant Coach", _assignee_opts,
+                    index=_assignee_opts.index(_cur_coach),
+                    key=f"ov_coach_{t['content_id']}",
+                )
+                if st.button("💾 Save this comment", key=f"ov_save_{t['content_id']}"):
+                    _av2 = "" if ov_coach == "— unassigned —" else ov_coach
+                    bq_client.update_ticket_meta(t["content_id"], ov_status, _av2, "")
+                    st.cache_data.clear()
+                    st.success("Saved.")
+
+    # ── Done comments (grayed out) ────────────────────────────────────────────
+    if not done_tix.empty:
+        st.divider()
+        st.markdown(f"**Already handled ({len(done_tix)})**")
+        for _, t in done_tix.iterrows():
+            _s = (t.get("ticket_status") or "").lower()
+            st.markdown(f"""
+<div style="background:#f9fafb;border:1px solid #f0f0f0;border-radius:10px;padding:10px 14px;margin-bottom:6px;opacity:0.6">
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+    <span class="badge badge-{_s}">{_s.replace("_"," ").capitalize()}</span>
+    <span style="font-size:0.72rem;color:#9ca3af">{str(t['created_at'])[:16]}</span>
+  </div>
+  <div style="font-size:0.84rem;color:#6b7280;line-height:1.5">{t.get("body_preview") or "<em>(empty)</em>"}</div>
+</div>""", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PAGE HEADER
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown(f"""
@@ -981,7 +1152,24 @@ with tab_main:
     if tickets.empty:
         st.info("No tickets match the current filters.")
     else:
-        # Table header — no separate Grant Coach column; initials avatar IS the dropdown
+        _OPEN_S   = {"open", "new", "assigned"}
+        _URG_RANK = {"critical": 2, "urgent": 1, "normal": 0}
+        _URG_NAME = {2: "critical", 1: "urgent", 0: "normal"}
+
+        # Build group key: (member_id, thread_id) when thread exists, else per-ticket
+        def _gk(r):
+            tid = r.get("thread_id") or ""
+            return f"{r['member_id']}|{tid}" if tid else str(r["content_id"])
+
+        tickets["_gk"] = tickets.apply(_gk, axis=1)
+
+        # Collect ordered groups (preserves created_at DESC ordering)
+        seen_gk: dict = {}
+        for idx, row in tickets.iterrows():
+            gk = row["_gk"]
+            seen_gk.setdefault(gk, []).append(idx)
+
+        # Table header
         h0, h1, h2, h3, h4, h5, h6 = st.columns([0.7, 1.5, 3.5, 1, 1.1, 0.4, 0.35])
         for col, label in zip(
             [h0, h1, h2, h3, h4, h5, h6],
@@ -989,58 +1177,75 @@ with tab_main:
         ):
             col.markdown(f'<span class="tbl-header">{label}</span>', unsafe_allow_html=True)
 
-        for _, row in tickets.iterrows():
+        for gk, indices in seen_gk.items():
+            grp = tickets.loc[indices]
+            row = grp.iloc[0]
             c0, c1, c2, c3, c4, c5, c6 = st.columns([0.7, 1.5, 3.5, 1, 1.1, 0.4, 0.35])
 
-            # Grant Coach initials — plain text
-            _current_assignee = row.get("assigned_to") or ""
-            _initials_display = _initials(_current_assignee) if _current_assignee else "·"
-            c0.markdown(f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">{_initials_display}</div>', unsafe_allow_html=True)
+            # Coach initials
+            _ca = row.get("assigned_to") or ""
+            c0.markdown(
+                f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
+                f'{"·" if not _ca else _initials(_ca)}</div>',
+                unsafe_allow_html=True,
+            )
 
-            # Member name button + timestamp
+            # Member name button
             mem_name = row["member_name"] or "Unknown"
-            if c1.button(
-                mem_name,
-                key=f"member_{row['content_id']}",
-                use_container_width=True,
-            ):
+            if c1.button(mem_name, key=f"member_{gk}", use_container_width=True):
                 st.session_state.member_id_filter = str(row["member_id"])
                 st.rerun()
             c1.caption(str(row["created_at"])[:10])
 
-            # Domain icon + question preview
-            domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
-            preview_text = str(row["body_preview"] or "")[:110]
-            if domain_icon:
+            if len(grp) == 1:
+                # ── Single ticket row ──────────────────────────────────────────
+                domain_icon  = DOMAIN_ICON.get(row.get("domain") or "", "")
+                preview_text = str(row["body_preview"] or "")[:110]
+                if domain_icon:
+                    c2.markdown(
+                        f'<span class="domain-circle">{domain_icon}</span> <small>{preview_text}</small>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    c2.caption(preview_text)
+
+                urg = (row.get("urgency") or "").lower()
+                c3.markdown(f'<span class="urg-pill urg-{urg}">{urg.capitalize() or "—"}</span>', unsafe_allow_html=True)
+
+                status = (row.get("ticket_status") or "").lower()
+                c4.markdown(f'<span class="badge badge-{status}">{status.replace("_"," ").capitalize()}</span>', unsafe_allow_html=True)
+
+                permalink = row.get("permalink") or ""
+                if permalink:
+                    c5.markdown(f"[↗]({permalink})")
+
+                if c6.button("→", key=f"open_{row['content_id']}"):
+                    show_ticket_dialog(row["content_id"])
+
+            else:
+                # ── Grouped row ────────────────────────────────────────────────
+                n_open  = int(grp["ticket_status"].isin(_OPEN_S).sum())
+                worst   = _URG_NAME[int(grp["urgency"].map(lambda u: _URG_RANK.get(u, 0)).max())]
+                domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
+
+                _di_html = f'<span class="domain-circle">{domain_icon}</span> ' if domain_icon else ""
                 c2.markdown(
-                    f'<span class="domain-circle">{domain_icon}</span> <small>{preview_text}</small>',
+                    f'{_di_html}<small><strong>{len(grp)} comments</strong> in thread · {n_open} open</small>',
                     unsafe_allow_html=True,
                 )
-            else:
-                c2.caption(preview_text)
+                c3.markdown(f'<span class="urg-pill urg-{worst}">{worst.capitalize()}</span>', unsafe_allow_html=True)
+                c4.markdown(f'<span class="badge badge-open">{n_open} open</span>', unsafe_allow_html=True)
 
-            # Urgency pill
-            urg = (row.get("urgency") or "").lower()
-            c3.markdown(
-                f'<span class="urg-pill urg-{urg}">{urg.capitalize() or "—"}</span>',
-                unsafe_allow_html=True,
-            )
+                permalink = row.get("permalink") or ""
+                if permalink:
+                    c5.markdown(f"[↗]({permalink})")
 
-            # Status badge
-            status = (row.get("ticket_status") or "").lower()
-            c4.markdown(
-                f'<span class="badge badge-{status}">{status.replace("_", " ").capitalize()}</span>',
-                unsafe_allow_html=True,
-            )
-
-            # Permalink
-            permalink = row.get("permalink") or ""
-            if permalink:
-                c5.markdown(f"[↗]({permalink})")
-
-            # Open ticket button
-            if c6.button("→", key=f"open_{row['content_id']}"):
-                show_ticket_dialog(row["content_id"])
+                if c6.button("→", key=f"open_grp_{gk}"):
+                    show_group_dialog(
+                        thread_id=str(row["thread_id"]),
+                        member_id=str(row["member_id"]),
+                        member_name=mem_name,
+                    )
 
     st.markdown("</div>", unsafe_allow_html=True)
 

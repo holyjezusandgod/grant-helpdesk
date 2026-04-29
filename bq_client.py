@@ -181,6 +181,50 @@ def get_ticket_detail(content_id: str) -> dict:
     return df.iloc[0].to_dict()
 
 
+def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
+    """All tickets from one member in one thread (all statuses), used by the group dialog."""
+    _gt_cols = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
+    _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
+    _optional_except = ["difficulty", "team_comment_replied"]
+    _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
+    sql = f"""
+        WITH live AS (
+            SELECT
+                gt.* EXCEPT({_except_cols}),
+                COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
+                tm.status                                               AS manual_status,
+                COALESCE(tm.domain, gt.domain)                         AS domain,
+                CASE
+                    WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
+                    WHEN tm.status IS NOT NULL AND tm.status != ''     THEN tm.status
+                    WHEN gt.ticket_status = 'not_a_question'           THEN 'not_a_question'
+                    ELSE 'open'
+                END                                                    AS ticket_status,
+                CASE
+                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
+                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 48 THEN 'urgent'
+                    ELSE 'critical'
+                END AS urgency
+            FROM `{config.TICKETS_TABLE}` gt
+            LEFT JOIN (
+                SELECT * FROM `{config.META_TABLE}`
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+            ) tm ON gt.content_id = tm.content_id
+            WHERE gt.thread_id = '{thread_id}'
+              AND CAST(gt.member_id AS STRING) = '{member_id}'
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+        )
+        SELECT *, LEFT(body, 300) AS body_preview
+        FROM live
+        ORDER BY created_at ASC
+    """
+    df = client.query(sql).to_dataframe()
+    if "domain" not in df.columns:
+        df["domain"] = None
+    return df
+
+
 def get_comments(content_id: str) -> pd.DataFrame:
     sql = f"""
         SELECT comment_id, author, body, created_at
@@ -309,30 +353,25 @@ def mn_promote_to_host(member_id: int, admin_api_key: str) -> dict:
 
 def post_mn_comment(post_id: str, body: str, api_key: str, reply_to_id: int = None) -> dict:
     """Post a comment to Mighty Networks via the API. Returns the created comment dict."""
-    import urllib.request, urllib.error, json as _json
-    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/comments"
-    payload = {
-        "body":            body,
-        "targetable_type": "Post",
-        "targetable_id":   int(post_id),
+    import requests as _requests
+    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/posts/{int(post_id)}/comments"
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+        "User-Agent":    "mn-api-client/1.0",
     }
-    if reply_to_id:
-        payload["reply_to_id"] = reply_to_id
-    data = _json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url, data=data,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type":  "application/json",
-        },
-        method="POST",
-    )
+    payload = {"text": body}
+    if reply_to_id is not None:
+        payload["reply_to_id"] = int(reply_to_id)
+    response = _requests.post(url, headers=headers, json=payload, timeout=30)
+    if response.status_code == 201:
+        return response.json()
     try:
-        with urllib.request.urlopen(req) as resp:
-            return _json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {e.code} {e.reason} — {detail}") from e
+        detail = response.json()
+    except Exception:
+        detail = response.text
+    raise RuntimeError(f"HTTP {response.status_code} — {detail}")
 
 
 def update_ticket_meta(
