@@ -966,7 +966,7 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
         _open_ids = set(open_tix["content_id"].tolist())
 
         with st.expander("📄 Full thread", expanded=True):
-            with st.container(height=340):
+            with st.container(height=520):
                 for _, item in thread.iterrows():
                     is_member_ticket = item["content_id"] in _open_ids
                     is_team = item["author_type"] == "team"
@@ -1118,6 +1118,25 @@ st.markdown(f"""
 
 tab_main, tab_reports, tab_train, tab_settings, tab_admin = st.tabs(["🎫 Tickets", "📊 Reports", "🤖 Train AI", "⚙️ Settings", "👥 Admin"])
 
+_QUICK_STATUSES = ["open", "answered", "closed", "cancelled"]
+
+def _quick_status_save(content_id: str, row_dict: dict):
+    new_status = st.session_state.get(f"qs_{content_id}")
+    if not new_status or new_status == row_dict.get("ticket_status"):
+        return
+    assignee = row_dict.get("assigned_to") or ""
+    domain   = row_dict.get("domain") or ""
+    bq_client.update_ticket_meta(content_id, new_status, assignee, domain)
+    # If closed/cancelled with no prior team comment → log as potential false positive
+    if new_status in ("closed", "cancelled") and not row_dict.get("team_commented"):
+        bq_client.log_event(
+            level="INFO",
+            source="closed_without_comment",
+            message=f"Ticket {content_id} closed as '{new_status}' without team comment — possible classifier false positive",
+            detail=f"member_id={row_dict.get('member_id')} domain={row_dict.get('domain')}",
+        )
+    st.cache_data.clear()
+
 
 # ── MAIN TAB ──────────────────────────────────────────────────────────────────
 with tab_main:
@@ -1212,8 +1231,18 @@ with tab_main:
                 urg = (row.get("urgency") or "").lower()
                 c3.markdown(f'<span class="urg-pill urg-{urg}">{urg.capitalize() or "—"}</span>', unsafe_allow_html=True)
 
-                status = (row.get("ticket_status") or "").lower()
-                c4.markdown(f'<span class="badge badge-{status}">{status.replace("_"," ").capitalize()}</span>', unsafe_allow_html=True)
+                # Quick status dropdown
+                _cur_s = (row.get("ticket_status") or "open")
+                _cur_s = _cur_s if _cur_s in _QUICK_STATUSES else "open"
+                c4.selectbox(
+                    "Status",
+                    _QUICK_STATUSES,
+                    index=_QUICK_STATUSES.index(_cur_s),
+                    key=f"qs_{row['content_id']}",
+                    on_change=_quick_status_save,
+                    args=(row["content_id"], row.to_dict()),
+                    label_visibility="collapsed",
+                )
 
                 permalink = row.get("permalink") or ""
                 if permalink:
