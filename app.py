@@ -565,6 +565,12 @@ if "_status_overrides" not in st.session_state:
     # {content_id: new_status} — local patches applied after a quick-status change
     # so we don't have to nuke the full cache and re-query BQ on every dropdown click
     st.session_state._status_overrides = {}
+if "_open_ticket" not in st.session_state:
+    # Set by render_ticket_table fragment → picked up outside the fragment to open dialog
+    # (dialogs can't be called from inside @st.fragment)
+    st.session_state._open_ticket = None
+if "_open_group" not in st.session_state:
+    st.session_state._open_group = None  # (thread_id, member_id, member_name)
 
 # ── Sidebar (user account + filters) ──────────────────────────────────────────
 with st.sidebar:
@@ -1227,7 +1233,8 @@ def render_ticket_table(tickets, team_members):
                 c4.markdown(f"[↗]({permalink})")
 
             if c5.button("→", key=f"open_{row['content_id']}"):
-                show_ticket_dialog(row["content_id"])
+                st.session_state._open_ticket = row["content_id"]
+                st.rerun()
 
             _ca = row.get("assigned_to") or ""
             c6.markdown(
@@ -1257,11 +1264,12 @@ def render_ticket_table(tickets, team_members):
                 c4.markdown(f"[↗]({permalink})")
 
             if c5.button("→", key=f"open_grp_{gk}"):
-                show_group_dialog(
-                    thread_id=str(row["thread_id"]),
-                    member_id=str(row["member_id"]),
-                    member_name=mem_name,
+                st.session_state._open_group = (
+                    str(row["thread_id"]),
+                    str(row["member_id"]),
+                    mem_name,
                 )
+                st.rerun()
 
             _ca = row.get("assigned_to") or ""
             c6.markdown(
@@ -1327,6 +1335,18 @@ with tab_main:
     # render_ticket_table is an @st.fragment — a status dropdown change inside it
     # only re-runs THIS fragment, not the sidebar, KPIs, or BQ queries above.
     render_ticket_table(tickets, team_members)
+
+    # Dialogs can't be opened from inside @st.fragment, so the fragment sets
+    # session state and st.rerun() brings us here to open the dialog.
+    if st.session_state._open_ticket:
+        _cid = st.session_state._open_ticket
+        st.session_state._open_ticket = None
+        show_ticket_dialog(_cid)
+
+    if st.session_state._open_group:
+        _tid, _mid, _mname = st.session_state._open_group
+        st.session_state._open_group = None
+        show_group_dialog(thread_id=_tid, member_id=_mid, member_name=_mname)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
