@@ -395,6 +395,14 @@ button[data-testid="baseButton-secondary"]:hover {{
     background-color: #dde0f5 !important;
 }}
 
+/* ── Sidebar filter container frame ── */
+.sidebar-filter-frame {{
+    background: #f5f7fb;
+    border-radius: 16px;
+    padding: 12px 14px 6px;
+    margin-bottom: 10px;
+}}
+
 /* ── Metric cards (reports tab) ── */
 [data-testid="metric-container"] {{
     background: {CARD_BG};
@@ -448,9 +456,11 @@ DOMAIN_ICON = {
 
 STATUS_ICON = {
     "open":            "🔵",
+    "assigned":        "🟣",
+    "answered":        "✅",
     "closed":          "🟢",
     "cancelled":       "🔴",
-    "answered":        "✅",
+    "flagged":         "🚩",
     "not_a_question":  "⚪",
 }
 URGENCY_ICON = {
@@ -469,12 +479,14 @@ def _avatar_class(name: str) -> str:
     return colors[hash(name or "") % len(colors)]
 
 def kpi_card(label: str, value, icon_color: str) -> str:
-    """KPI Row A — icon top-left, label top-right, big value bottom."""
+    """KPI Row A — colored dot + label top, big value bottom."""
     return f"""
     <div class="kpi-card">
       <div class="kpi-card-top">
-        <div class="kpi-icon" style="background:{icon_color}">●</div>
-        <div class="kpi-label">{label}</div>
+        <div style="display:flex;align-items:center;gap:7px;">
+          <div style="width:10px;height:10px;border-radius:50%;background:{icon_color};flex-shrink:0;"></div>
+          <div class="kpi-label">{label}</div>
+        </div>
       </div>
       <div class="kpi-value">{value:,}</div>
     </div>"""
@@ -549,6 +561,10 @@ current_user = user.email or user.name or ""
 # ── Session state defaults ─────────────────────────────────────────────────────
 if "member_id_filter" not in st.session_state:
     st.session_state.member_id_filter = ""
+if "_status_overrides" not in st.session_state:
+    # {content_id: new_status} — local patches applied after a quick-status change
+    # so we don't have to nuke the full cache and re-query BQ on every dropdown click
+    st.session_state._status_overrides = {}
 
 # ── Sidebar (user account + filters) ──────────────────────────────────────────
 with st.sidebar:
@@ -639,8 +655,9 @@ with st.sidebar:
     )
 
     st.divider()
-    if st.button("🔄 Refresh data", use_container_width=True, type="primary"):
+    if st.button("↺  Refresh", use_container_width=True, type="primary"):
         st.cache_data.clear()
+        st.session_state._status_overrides = {}
         st.rerun()
 
 
@@ -838,6 +855,7 @@ def show_ticket_dialog(content_id: str):
                     ticket["member_id"], assignee_val, current_user
                 )
             st.cache_data.clear()
+            st.session_state._status_overrides = {}
             st.success("Saved." if not override_assignment else "Saved — permanent Grant Coach updated.")
     else:
         st.caption("⚠️ Ticket is closed — status locked.")
@@ -1118,7 +1136,7 @@ st.markdown(f"""
 
 tab_main, tab_reports, tab_train, tab_settings, tab_admin = st.tabs(["🎫 Tickets", "📊 Reports", "🤖 Train AI", "⚙️ Settings", "👥 Admin"])
 
-_QUICK_STATUSES = ["open", "answered", "closed", "cancelled"]
+_QUICK_STATUSES = ["open", "assigned", "answered", "closed", "cancelled", "flagged"]
 
 def _quick_status_save(content_id: str, row_dict: dict):
     new_status = st.session_state.get(f"qs_{content_id}")
@@ -1135,7 +1153,10 @@ def _quick_status_save(content_id: str, row_dict: dict):
             message=f"Ticket {content_id} closed as '{new_status}' without team comment — possible classifier false positive",
             detail=f"member_id={row_dict.get('member_id')} domain={row_dict.get('domain')}",
         )
-    st.cache_data.clear()
+    # Patch locally so the dropdown reflects the change immediately.
+    # Do NOT clear the full cache here — that would re-run all BQ queries and
+    # freeze the UI. The Refresh button does a full reload when the user wants it.
+    st.session_state._status_overrides[content_id] = new_status
 
 
 # ── MAIN TAB ──────────────────────────────────────────────────────────────────
@@ -1158,10 +1179,12 @@ with tab_main:
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     # ── KPI Row B ─────────────────────────────────────────────────────────────
     answered_today = int(daily_stats.get("answered_today", 0))
+    in_today       = int(daily_stats.get("in_today", 0))
+    total_open     = int(open_stats.get("open", 0))
     goal           = int(daily_stats.get("goal", config.DAILY_GOAL))
     b1, b2, b3, b4 = st.columns(4)
-    b1.markdown(kpi_b_card("In today",        int(daily_stats.get("in_today", 0))),   unsafe_allow_html=True)
-    b2.markdown(kpi_b_card("Answered today",  answered_today),                         unsafe_allow_html=True)
+    b1.markdown(kpi_b_card("New questions today",        in_today),   unsafe_allow_html=True)
+    b2.markdown(kpi_b_card(f"Answered today (from {total_open:,} open)",  answered_today), unsafe_allow_html=True)
     b3.markdown(kpi_b_card("Daily avg (30d)", daily_stats.get("daily_avg", 0)),        unsafe_allow_html=True)
     b4.markdown(goal_card(answered_today, goal),                                       unsafe_allow_html=True)
 
@@ -1188,53 +1211,57 @@ with tab_main:
             gk = row["_gk"]
             seen_gk.setdefault(gk, []).append(idx)
 
-        # Table header
-        h0, h1, h2, h3, h4, h5, h6 = st.columns([0.7, 1.5, 3.5, 1, 1.1, 0.4, 0.35])
+        # Urgency dot helper
+        _URG_DOT_COLOR = {"normal": GREEN, "urgent": YELLOW, "critical": RED}
+        def _urg_dot(urg: str) -> str:
+            color = _URG_DOT_COLOR.get(urg, "#ccc")
+            return f'<div style="width:10px;height:10px;border-radius:50%;background:{color};display:inline-block;"></div>'
+
+        # Table header — new column order: Member, Question, Urgency, Status, Link, Open, Coach
+        h0, h1, h2, h3, h4, h5, h6 = st.columns([1.5, 3.5, 0.5, 1.1, 0.4, 0.35, 0.7])
         for col, label in zip(
             [h0, h1, h2, h3, h4, h5, h6],
-            ["Coach", "Member", "Question", "Urgency", "Status", "Link", ""],
+            ["Member", "Question", "Urg", "Status", "Link", "", "Coach"],
         ):
             col.markdown(f'<span class="tbl-header">{label}</span>', unsafe_allow_html=True)
 
         for gk, indices in seen_gk.items():
             grp = tickets.loc[indices]
             row = grp.iloc[0]
-            c0, c1, c2, c3, c4, c5, c6 = st.columns([0.7, 1.5, 3.5, 1, 1.1, 0.4, 0.35])
+            c0, c1, c2, c3, c4, c5, c6 = st.columns([1.5, 3.5, 0.5, 1.1, 0.4, 0.35, 0.7])
 
-            # Coach initials
-            _ca = row.get("assigned_to") or ""
-            c0.markdown(
-                f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
-                f'{"·" if not _ca else _initials(_ca)}</div>',
-                unsafe_allow_html=True,
-            )
-
-            # Member name button
+            # Member name button (now first)
             mem_name = row["member_name"] or "Unknown"
-            if c1.button(mem_name, key=f"member_{gk}", use_container_width=True):
+            if c0.button(mem_name, key=f"member_{gk}", use_container_width=True):
                 st.session_state.member_id_filter = str(row["member_id"])
                 st.rerun()
-            c1.caption(str(row["created_at"])[:10])
+            c0.caption(str(row["created_at"])[:10])
 
             if len(grp) == 1:
                 # ── Single ticket row ──────────────────────────────────────────
                 domain_icon  = DOMAIN_ICON.get(row.get("domain") or "", "")
                 preview_text = str(row["body_preview"] or "")[:110]
                 if domain_icon:
-                    c2.markdown(
-                        f'<span class="domain-circle">{domain_icon}</span> <small>{preview_text}</small>',
+                    c1.markdown(
+                        f'<span class="domain-circle">{domain_icon}</span> <small style="color:#4a52a3;font-weight:500">{preview_text}</small>',
                         unsafe_allow_html=True,
                     )
                 else:
-                    c2.caption(preview_text)
+                    c1.markdown(f'<small style="color:#4a52a3;font-weight:500">{preview_text}</small>', unsafe_allow_html=True)
 
-                urg = (row.get("urgency") or "").lower()
-                c3.markdown(f'<span class="urg-pill urg-{urg}">{urg.capitalize() or "—"}</span>', unsafe_allow_html=True)
+                urg = (row.get("urgency") or "normal").lower()
+                c2.markdown(
+                    f'<div style="padding-top:6px;text-align:center">{_urg_dot(urg)}</div>',
+                    unsafe_allow_html=True,
+                )
 
-                # Quick status dropdown
-                _cur_s = (row.get("ticket_status") or "open")
+                # Quick status dropdown — use local override if one was just saved
+                _cur_s = st.session_state._status_overrides.get(
+                    row["content_id"],
+                    row.get("ticket_status") or "open",
+                )
                 _cur_s = _cur_s if _cur_s in _QUICK_STATUSES else "open"
-                c4.selectbox(
+                c3.selectbox(
                     "Status",
                     _QUICK_STATUSES,
                     index=_QUICK_STATUSES.index(_cur_s),
@@ -1246,10 +1273,18 @@ with tab_main:
 
                 permalink = row.get("permalink") or ""
                 if permalink:
-                    c5.markdown(f"[↗]({permalink})")
+                    c4.markdown(f"[↗]({permalink})")
 
-                if c6.button("→", key=f"open_{row['content_id']}"):
+                if c5.button("→", key=f"open_{row['content_id']}"):
                     show_ticket_dialog(row["content_id"])
+
+                # Coach initials (last)
+                _ca = row.get("assigned_to") or ""
+                c6.markdown(
+                    f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
+                    f'{"·" if not _ca else _initials(_ca)}</div>',
+                    unsafe_allow_html=True,
+                )
 
             else:
                 # ── Grouped row ────────────────────────────────────────────────
@@ -1258,23 +1293,34 @@ with tab_main:
                 domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
 
                 _di_html = f'<span class="domain-circle">{domain_icon}</span> ' if domain_icon else ""
-                c2.markdown(
-                    f'{_di_html}<small><strong>{len(grp)} comments</strong> in thread · {n_open} open</small>',
+                c1.markdown(
+                    f'{_di_html}<small style="color:#4a52a3;font-weight:500"><strong>{len(grp)} comments</strong> in thread · {n_open} open</small>',
                     unsafe_allow_html=True,
                 )
-                c3.markdown(f'<span class="urg-pill urg-{worst}">{worst.capitalize()}</span>', unsafe_allow_html=True)
-                c4.markdown(f'<span class="badge badge-open">{n_open} open</span>', unsafe_allow_html=True)
+                c2.markdown(
+                    f'<div style="padding-top:6px;text-align:center">{_urg_dot(worst)}</div>',
+                    unsafe_allow_html=True,
+                )
+                c3.markdown(f'<span class="badge badge-open">{n_open} open</span>', unsafe_allow_html=True)
 
                 permalink = row.get("permalink") or ""
                 if permalink:
-                    c5.markdown(f"[↗]({permalink})")
+                    c4.markdown(f"[↗]({permalink})")
 
-                if c6.button("→", key=f"open_grp_{gk}"):
+                if c5.button("→", key=f"open_grp_{gk}"):
                     show_group_dialog(
                         thread_id=str(row["thread_id"]),
                         member_id=str(row["member_id"]),
                         member_name=mem_name,
                     )
+
+                # Coach initials (last)
+                _ca = row.get("assigned_to") or ""
+                c6.markdown(
+                    f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
+                    f'{"·" if not _ca else _initials(_ca)}</div>',
+                    unsafe_allow_html=True,
+                )
 
     st.markdown("</div>", unsafe_allow_html=True)
 
