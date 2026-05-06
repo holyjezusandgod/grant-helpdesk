@@ -629,7 +629,11 @@ with st.sidebar:
             date_from = date_to = custom_range
 
     # 3. Assigned To
-    team_members = bq_client.get_team_members()
+    @st.cache_data(ttl=300)
+    def load_team_members():
+        return bq_client.get_team_members()
+
+    team_members = load_team_members()
     filter_assignee = st.selectbox(
         "Grant Coach",
         ["All"] + team_members,
@@ -1138,6 +1142,135 @@ tab_main, tab_reports, tab_train, tab_settings, tab_admin = st.tabs(["🎫 Ticke
 
 _QUICK_STATUSES = ["open", "assigned", "answered", "closed", "cancelled", "flagged"]
 
+@st.fragment
+def render_ticket_table(tickets, team_members):
+    """Isolated fragment — re-runs only when a widget inside it changes,
+    so a status dropdown click does NOT re-run the sidebar, KPIs, or BQ queries."""
+
+    if tickets.empty:
+        st.info("No tickets match the current filters.")
+        return
+
+    _OPEN_S   = {"open", "new", "assigned"}
+    _URG_RANK = {"critical": 2, "urgent": 1, "normal": 0}
+    _URG_NAME = {2: "critical", 1: "urgent", 0: "normal"}
+
+    def _gk(r):
+        tid = r.get("thread_id") or ""
+        return f"{r['member_id']}|{tid}" if tid else str(r["content_id"])
+
+    tickets = tickets.copy()
+    tickets["_gk"] = tickets.apply(_gk, axis=1)
+
+    seen_gk: dict = {}
+    for idx, row in tickets.iterrows():
+        gk = row["_gk"]
+        seen_gk.setdefault(gk, []).append(idx)
+
+    _URG_DOT_COLOR = {"normal": GREEN, "urgent": YELLOW, "critical": RED}
+    def _urg_dot(urg: str) -> str:
+        color = _URG_DOT_COLOR.get(urg, "#ccc")
+        return f'<div style="width:10px;height:10px;border-radius:50%;background:{color};display:inline-block;"></div>'
+
+    h0, h1, h2, h3, h4, h5, h6 = st.columns([1.5, 3.5, 0.5, 1.1, 0.4, 0.35, 0.7])
+    for col, label in zip(
+        [h0, h1, h2, h3, h4, h5, h6],
+        ["Member", "Question", "Urg", "Status", "Link", "", "Coach"],
+    ):
+        col.markdown(f'<span class="tbl-header">{label}</span>', unsafe_allow_html=True)
+
+    for gk, indices in seen_gk.items():
+        grp = tickets.loc[indices]
+        row = grp.iloc[0]
+        c0, c1, c2, c3, c4, c5, c6 = st.columns([1.5, 3.5, 0.5, 1.1, 0.4, 0.35, 0.7])
+
+        mem_name = row["member_name"] or "Unknown"
+        if c0.button(mem_name, key=f"member_{gk}", use_container_width=True):
+            st.session_state.member_id_filter = str(row["member_id"])
+            st.rerun()
+        c0.caption(str(row["created_at"])[:10])
+
+        if len(grp) == 1:
+            domain_icon  = DOMAIN_ICON.get(row.get("domain") or "", "")
+            preview_text = str(row["body_preview"] or "")[:110]
+            if domain_icon:
+                c1.markdown(
+                    f'<span class="domain-circle">{domain_icon}</span> <small style="color:#4a52a3;font-weight:500">{preview_text}</small>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                c1.markdown(f'<small style="color:#4a52a3;font-weight:500">{preview_text}</small>', unsafe_allow_html=True)
+
+            urg = (row.get("urgency") or "normal").lower()
+            c2.markdown(
+                f'<div style="padding-top:6px;text-align:center">{_urg_dot(urg)}</div>',
+                unsafe_allow_html=True,
+            )
+
+            _cur_s = st.session_state._status_overrides.get(
+                row["content_id"],
+                row.get("ticket_status") or "open",
+            )
+            _cur_s = _cur_s if _cur_s in _QUICK_STATUSES else "open"
+            c3.selectbox(
+                "Status",
+                _QUICK_STATUSES,
+                index=_QUICK_STATUSES.index(_cur_s),
+                key=f"qs_{row['content_id']}",
+                on_change=_quick_status_save,
+                args=(row["content_id"], row.to_dict()),
+                label_visibility="collapsed",
+            )
+
+            permalink = row.get("permalink") or ""
+            if permalink:
+                c4.markdown(f"[↗]({permalink})")
+
+            if c5.button("→", key=f"open_{row['content_id']}"):
+                show_ticket_dialog(row["content_id"])
+
+            _ca = row.get("assigned_to") or ""
+            c6.markdown(
+                f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
+                f'{"·" if not _ca else _initials(_ca)}</div>',
+                unsafe_allow_html=True,
+            )
+
+        else:
+            n_open  = int(grp["ticket_status"].isin(_OPEN_S).sum())
+            worst   = _URG_NAME[int(grp["urgency"].map(lambda u: _URG_RANK.get(u, 0)).max())]
+            domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
+
+            _di_html = f'<span class="domain-circle">{domain_icon}</span> ' if domain_icon else ""
+            c1.markdown(
+                f'{_di_html}<small style="color:#4a52a3;font-weight:500"><strong>{len(grp)} comments</strong> in thread · {n_open} open</small>',
+                unsafe_allow_html=True,
+            )
+            c2.markdown(
+                f'<div style="padding-top:6px;text-align:center">{_urg_dot(worst)}</div>',
+                unsafe_allow_html=True,
+            )
+            c3.markdown(f'<span class="badge badge-open">{n_open} open</span>', unsafe_allow_html=True)
+
+            permalink = row.get("permalink") or ""
+            if permalink:
+                c4.markdown(f"[↗]({permalink})")
+
+            if c5.button("→", key=f"open_grp_{gk}"):
+                show_group_dialog(
+                    thread_id=str(row["thread_id"]),
+                    member_id=str(row["member_id"]),
+                    member_name=mem_name,
+                )
+
+            _ca = row.get("assigned_to") or ""
+            c6.markdown(
+                f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
+                f'{"·" if not _ca else _initials(_ca)}</div>',
+                unsafe_allow_html=True,
+            )
+
+
 def _quick_status_save(content_id: str, row_dict: dict):
     new_status = st.session_state.get(f"qs_{content_id}")
     if not new_status or new_status == row_dict.get("ticket_status"):
@@ -1191,136 +1324,9 @@ with tab_main:
     # ── Ticket list ───────────────────────────────────────────────────────────
     st.markdown(f'<div class="section-card-title" style="padding:6px 0 10px">Tickets ({len(tickets)})</div>', unsafe_allow_html=True)
 
-    if tickets.empty:
-        st.info("No tickets match the current filters.")
-    else:
-        _OPEN_S   = {"open", "new", "assigned"}
-        _URG_RANK = {"critical": 2, "urgent": 1, "normal": 0}
-        _URG_NAME = {2: "critical", 1: "urgent", 0: "normal"}
-
-        # Build group key: (member_id, thread_id) when thread exists, else per-ticket
-        def _gk(r):
-            tid = r.get("thread_id") or ""
-            return f"{r['member_id']}|{tid}" if tid else str(r["content_id"])
-
-        tickets["_gk"] = tickets.apply(_gk, axis=1)
-
-        # Collect ordered groups (preserves created_at DESC ordering)
-        seen_gk: dict = {}
-        for idx, row in tickets.iterrows():
-            gk = row["_gk"]
-            seen_gk.setdefault(gk, []).append(idx)
-
-        # Urgency dot helper
-        _URG_DOT_COLOR = {"normal": GREEN, "urgent": YELLOW, "critical": RED}
-        def _urg_dot(urg: str) -> str:
-            color = _URG_DOT_COLOR.get(urg, "#ccc")
-            return f'<div style="width:10px;height:10px;border-radius:50%;background:{color};display:inline-block;"></div>'
-
-        # Table header — new column order: Member, Question, Urgency, Status, Link, Open, Coach
-        h0, h1, h2, h3, h4, h5, h6 = st.columns([1.5, 3.5, 0.5, 1.1, 0.4, 0.35, 0.7])
-        for col, label in zip(
-            [h0, h1, h2, h3, h4, h5, h6],
-            ["Member", "Question", "Urg", "Status", "Link", "", "Coach"],
-        ):
-            col.markdown(f'<span class="tbl-header">{label}</span>', unsafe_allow_html=True)
-
-        for gk, indices in seen_gk.items():
-            grp = tickets.loc[indices]
-            row = grp.iloc[0]
-            c0, c1, c2, c3, c4, c5, c6 = st.columns([1.5, 3.5, 0.5, 1.1, 0.4, 0.35, 0.7])
-
-            # Member name button (now first)
-            mem_name = row["member_name"] or "Unknown"
-            if c0.button(mem_name, key=f"member_{gk}", use_container_width=True):
-                st.session_state.member_id_filter = str(row["member_id"])
-                st.rerun()
-            c0.caption(str(row["created_at"])[:10])
-
-            if len(grp) == 1:
-                # ── Single ticket row ──────────────────────────────────────────
-                domain_icon  = DOMAIN_ICON.get(row.get("domain") or "", "")
-                preview_text = str(row["body_preview"] or "")[:110]
-                if domain_icon:
-                    c1.markdown(
-                        f'<span class="domain-circle">{domain_icon}</span> <small style="color:#4a52a3;font-weight:500">{preview_text}</small>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    c1.markdown(f'<small style="color:#4a52a3;font-weight:500">{preview_text}</small>', unsafe_allow_html=True)
-
-                urg = (row.get("urgency") or "normal").lower()
-                c2.markdown(
-                    f'<div style="padding-top:6px;text-align:center">{_urg_dot(urg)}</div>',
-                    unsafe_allow_html=True,
-                )
-
-                # Quick status dropdown — use local override if one was just saved
-                _cur_s = st.session_state._status_overrides.get(
-                    row["content_id"],
-                    row.get("ticket_status") or "open",
-                )
-                _cur_s = _cur_s if _cur_s in _QUICK_STATUSES else "open"
-                c3.selectbox(
-                    "Status",
-                    _QUICK_STATUSES,
-                    index=_QUICK_STATUSES.index(_cur_s),
-                    key=f"qs_{row['content_id']}",
-                    on_change=_quick_status_save,
-                    args=(row["content_id"], row.to_dict()),
-                    label_visibility="collapsed",
-                )
-
-                permalink = row.get("permalink") or ""
-                if permalink:
-                    c4.markdown(f"[↗]({permalink})")
-
-                if c5.button("→", key=f"open_{row['content_id']}"):
-                    show_ticket_dialog(row["content_id"])
-
-                # Coach initials (last)
-                _ca = row.get("assigned_to") or ""
-                c6.markdown(
-                    f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
-                    f'{"·" if not _ca else _initials(_ca)}</div>',
-                    unsafe_allow_html=True,
-                )
-
-            else:
-                # ── Grouped row ────────────────────────────────────────────────
-                n_open  = int(grp["ticket_status"].isin(_OPEN_S).sum())
-                worst   = _URG_NAME[int(grp["urgency"].map(lambda u: _URG_RANK.get(u, 0)).max())]
-                domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
-
-                _di_html = f'<span class="domain-circle">{domain_icon}</span> ' if domain_icon else ""
-                c1.markdown(
-                    f'{_di_html}<small style="color:#4a52a3;font-weight:500"><strong>{len(grp)} comments</strong> in thread · {n_open} open</small>',
-                    unsafe_allow_html=True,
-                )
-                c2.markdown(
-                    f'<div style="padding-top:6px;text-align:center">{_urg_dot(worst)}</div>',
-                    unsafe_allow_html=True,
-                )
-                c3.markdown(f'<span class="badge badge-open">{n_open} open</span>', unsafe_allow_html=True)
-
-                permalink = row.get("permalink") or ""
-                if permalink:
-                    c4.markdown(f"[↗]({permalink})")
-
-                if c5.button("→", key=f"open_grp_{gk}"):
-                    show_group_dialog(
-                        thread_id=str(row["thread_id"]),
-                        member_id=str(row["member_id"]),
-                        member_name=mem_name,
-                    )
-
-                # Coach initials (last)
-                _ca = row.get("assigned_to") or ""
-                c6.markdown(
-                    f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
-                    f'{"·" if not _ca else _initials(_ca)}</div>',
-                    unsafe_allow_html=True,
-                )
+    # render_ticket_table is an @st.fragment — a status dropdown change inside it
+    # only re-runs THIS fragment, not the sidebar, KPIs, or BQ queries above.
+    render_ticket_table(tickets, team_members)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
