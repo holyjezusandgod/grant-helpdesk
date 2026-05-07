@@ -1,5 +1,6 @@
 import os
 import datetime
+import concurrent.futures
 import streamlit as st
 import bq_client
 import config
@@ -433,6 +434,35 @@ button[data-testid="baseButton-secondary"]:hover {{
 
 /* ── Dividers ── */
 hr {{ border-color: #e0e6f0 !important; }}
+
+/* ── Ticket preview tooltip ── */
+.tip-wrap {{
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+}}
+.tip-wrap .tip-box {{
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 9999;
+    background: #1a1a2e;
+    color: #f0f2f8;
+    font-size: 0.82rem;
+    line-height: 1.55;
+    padding: 10px 14px;
+    border-radius: 10px;
+    width: 420px;
+    max-width: 90vw;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    white-space: pre-wrap;
+    word-break: break-word;
+    pointer-events: none;
+}}
+.tip-wrap:hover .tip-box {{
+    display: block;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -558,6 +588,70 @@ if not st.user.is_logged_in:
 user         = st.user
 current_user = user.email or user.name or ""
 
+# During the Auth0 OAuth redirect callback Streamlit runs the script but
+# st.session_state is None (not yet initialised). Stop here and let Streamlit
+# complete the handshake — it will immediately re-run with a proper session.
+if st.session_state is None:
+    st.stop()
+
+# ── Coach onboarding — fires on first login if email not yet linked ────────────
+_ADMIN_EMAILS = {"martin.j.menke@gmail.com"}
+
+def _is_known_coach(email: str) -> bool:
+    if email in _ADMIN_EMAILS:
+        return True
+    return bq_client.get_coach_by_login_email(email) is not None
+
+if current_user and current_user not in _ADMIN_EMAILS:
+    if "_coach_verified" not in st.session_state:
+        try:
+            st.session_state._coach_verified = _is_known_coach(current_user)
+        except Exception:
+            st.session_state._coach_verified = False
+
+    if not st.session_state._coach_verified:
+        st.markdown(f"""
+        <div style="max-width:480px;margin:80px auto 0;background:#fff;border-radius:20px;
+                    padding:40px 36px;box-shadow:0 8px 32px rgba(74,82,163,0.12);">
+          <div style="font-size:2rem;margin-bottom:8px">👋</div>
+          <div style="font-size:1.3rem;font-weight:700;color:#1a1a2e;margin-bottom:6px">
+            Welcome to Lesko Help Desk
+          </div>
+          <div style="font-size:0.9rem;color:#6b7280;margin-bottom:28px;line-height:1.6">
+            It looks like this is your first time logging in with
+            <strong>{current_user}</strong>.<br>
+            Select your grant coach profile below to link your account.
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.container():
+            col = st.columns([1, 2, 1])[1]
+            with col:
+                unlinked = bq_client.get_unlinked_coaches()
+                if unlinked.empty:
+                    st.warning("No unlinked coach profiles found. Ask your admin to add you first.")
+                    if st.button("Sign out"):
+                        st.logout()
+                else:
+                    _opts = ["— select your profile —"] + [
+                        f"{r['full_name']}  ({r['email']})"
+                        for _, r in unlinked.iterrows()
+                    ]
+                    _sel = st.selectbox("Your grant coach profile", _opts, key="_onboard_sel")
+
+                    if st.button("This is me →", type="primary", use_container_width=True,
+                                 disabled=_sel == "— select your profile —"):
+                        _idx = _opts.index(_sel) - 1
+                        _row = unlinked.iloc[_idx]
+                        bq_client.link_coach_login_email(int(_row["member_id"]), current_user)
+                        st.session_state._coach_verified = True
+                        st.cache_data.clear()
+                        st.rerun()
+
+                    st.caption("Not a grant coach? Contact martin.j.menke@gmail.com")
+        st.stop()
+
 # ── Session state defaults ─────────────────────────────────────────────────────
 if "member_id_filter" not in st.session_state:
     st.session_state.member_id_filter = ""
@@ -568,9 +662,13 @@ if "_status_overrides" not in st.session_state:
 if "_open_ticket" not in st.session_state:
     # Set by render_ticket_table fragment → picked up outside the fragment to open dialog
     # (dialogs can't be called from inside @st.fragment)
-    st.session_state._open_ticket = None
+    st.session_state._open_ticket = None       # content_id
+if "_open_ticket_thread" not in st.session_state:
+    st.session_state._open_ticket_thread = None  # thread_id hint for parallel prefetch
 if "_open_group" not in st.session_state:
     st.session_state._open_group = None  # (thread_id, member_id, member_name)
+if "_ticket_page" not in st.session_state:
+    st.session_state._ticket_page = 0
 
 # ── Sidebar (user account + filters) ──────────────────────────────────────────
 with st.sidebar:
@@ -668,6 +766,7 @@ with st.sidebar:
     if st.button("↺  Refresh", use_container_width=True, type="primary"):
         st.cache_data.clear()
         st.session_state._status_overrides = {}
+        st.session_state._ticket_page = 0
         st.rerun()
 
 
@@ -700,10 +799,26 @@ def load_report(report_type: str, date_from: str, date_to: str):
 # ══════════════════════════════════════════════════════════════════════════════
 # TICKET DETAIL DIALOG
 # ══════════════════════════════════════════════════════════════════════════════
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_ticket_detail(content_id: str) -> dict:
+    return bq_client.get_ticket_detail(content_id)
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_thread(thread_id: str):
+    return bq_client.get_thread(thread_id)
+
+
 @st.dialog("Ticket Detail", width="large")
-def show_ticket_dialog(content_id: str):
-    ticket = bq_client.get_ticket_detail(content_id)
+def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
+    # Fire ticket detail + thread in parallel — thread_id_hint comes from the
+    # already-loaded row so we don't have to wait for ticket detail to finish first.
+    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    _fut_ticket = _executor.submit(_cached_ticket_detail, content_id)
+    _fut_thread = _executor.submit(_cached_thread, thread_id_hint) if thread_id_hint else None
+    ticket = _fut_ticket.result()
+
     if not ticket:
+        _executor.shutdown(wait=False)
         st.warning("Ticket not found.")
         return
 
@@ -743,10 +858,10 @@ def show_ticket_dialog(content_id: str):
 </div>
 """, unsafe_allow_html=True)
 
-    # Full thread
+    # Full thread — use parallel result if available, otherwise fetch now
     thread_id = ticket.get("thread_id") or content_id
-    with st.spinner("Loading thread…"):
-        thread = bq_client.get_thread(thread_id)
+    thread = _fut_thread.result() if _fut_thread else _cached_thread(thread_id)
+    _executor.shutdown(wait=False)
 
     if not thread.empty:
         # ── Root post ─────────────────────────────────────────────────────────
@@ -959,6 +1074,11 @@ def show_ticket_dialog(content_id: str):
 # ══════════════════════════════════════════════════════════════════════════════
 # GROUP DIALOG — multiple comments from same member in same thread
 # ══════════════════════════════════════════════════════════════════════════════
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_member_thread(thread_id: str, member_id: str):
+    return bq_client.get_member_thread_tickets(thread_id, member_id)
+
+
 @st.dialog("Member Thread", width="large")
 def show_group_dialog(thread_id: str, member_id: str, member_name: str):
     _OPEN = {"open", "new", "assigned"}
@@ -968,7 +1088,7 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
         "critical": ("#fde0e0", "#8a1f1f"),
     }
 
-    group_tix = bq_client.get_member_thread_tickets(thread_id, member_id)
+    group_tix = _cached_member_thread(thread_id, member_id)
     if group_tix.empty:
         st.warning("No tickets found.")
         return
@@ -985,8 +1105,7 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
 """, unsafe_allow_html=True)
 
     # ── Original post (context) ───────────────────────────────────────────────
-    with st.spinner("Loading thread…"):
-        thread = bq_client.get_thread(thread_id)
+    thread = _cached_thread(thread_id)
 
     # ── Full thread ───────────────────────────────────────────────────────────
     if not thread.empty:
@@ -1144,12 +1263,17 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-tab_main, tab_reports, tab_train, tab_settings, tab_admin = st.tabs(["🎫 Tickets", "📊 Reports", "🤖 Train AI", "⚙️ Settings", "👥 Admin"])
+tab_main, tab_reports, tab_train, tab_settings, tab_admin, tab_inbox = st.tabs(["🎫 Tickets", "📊 Reports", "🤖 Train AI", "⚙️ Settings", "👥 Admin", "📬 Inbox"])
 
-_QUICK_STATUSES = ["open", "assigned", "answered", "closed", "cancelled", "flagged"]
+_QUICK_STATUSES = ["open", "assigned", "answered", "closed", "cancelled", "flagged", "not_a_question"]
+_QUICK_STATUS_LABELS = {
+    "open": "open", "assigned": "assigned", "answered": "answered",
+    "closed": "closed", "cancelled": "cancelled", "flagged": "flagged",
+    "not_a_question": "✗ not a question",
+}
 
 @st.fragment
-def render_ticket_table(tickets, team_members):
+def render_ticket_table(tickets, team_members, filter_status="All"):
     """Isolated fragment — re-runs only when a widget inside it changes,
     so a status dropdown click does NOT re-run the sidebar, KPIs, or BQ queries."""
 
@@ -1173,39 +1297,69 @@ def render_ticket_table(tickets, team_members):
         gk = row["_gk"]
         seen_gk.setdefault(gk, []).append(idx)
 
+    # ── Pagination ────────────────────────────────────────────────────────────
+    _PAGE_SIZE  = 25
+    _all_keys   = list(seen_gk.keys())
+    _total_rows = len(_all_keys)
+    _total_pages = max(1, -(-_total_rows // _PAGE_SIZE))  # ceiling division
+
+    # Clamp page to valid range (filters changing can reduce total pages)
+    _page = min(st.session_state._ticket_page, _total_pages - 1)
+    if _page != st.session_state._ticket_page:
+        st.session_state._ticket_page = _page
+
+    _page_keys  = _all_keys[_page * _PAGE_SIZE : (_page + 1) * _PAGE_SIZE]
+    _page_gk    = {k: seen_gk[k] for k in _page_keys}
+
     _URG_DOT_COLOR = {"normal": GREEN, "urgent": YELLOW, "critical": RED}
     def _urg_dot(urg: str) -> str:
         color = _URG_DOT_COLOR.get(urg, "#ccc")
         return f'<div style="width:10px;height:10px;border-radius:50%;background:{color};display:inline-block;"></div>'
 
-    h0, h1, h2, h3, h4, h5, h6 = st.columns([1.5, 3.5, 0.5, 1.1, 0.4, 0.35, 0.7])
+    h0, h1, h2, h3, h5, h6 = st.columns([1.3, 5.0, 0.4, 1.1, 0.35, 0.6])
     for col, label in zip(
-        [h0, h1, h2, h3, h4, h5, h6],
-        ["Member", "Question", "Urg", "Status", "Link", "", "Coach"],
+        [h0, h1, h2, h3, h5, h6],
+        ["Member", "Question", "Urg", "Status", "", "Coach"],
     ):
         col.markdown(f'<span class="tbl-header">{label}</span>', unsafe_allow_html=True)
 
-    for gk, indices in seen_gk.items():
+    _shown = 0
+    for gk, indices in _page_gk.items():
         grp = tickets.loc[indices]
         row = grp.iloc[0]
-        c0, c1, c2, c3, c4, c5, c6 = st.columns([1.5, 3.5, 0.5, 1.1, 0.4, 0.35, 0.7])
+
+        # Optimistic filter: if status was changed locally and no longer matches
+        # the active filter, hide the row immediately — no BQ re-query needed.
+        if filter_status != "All" and len(grp) == 1:
+            overridden = st.session_state._status_overrides.get(row["content_id"])
+            if overridden and overridden != filter_status:
+                continue
+
+        _shown += 1
+        c0, c1, c2, c3, c5, c6 = st.columns([1.3, 5.0, 0.4, 1.1, 0.35, 0.6])
 
         mem_name = row["member_name"] or "Unknown"
         if c0.button(mem_name, key=f"member_{gk}", use_container_width=True):
             st.session_state.member_id_filter = str(row["member_id"])
+            st.session_state._ticket_page = 0
             st.rerun()
         c0.caption(str(row["created_at"])[:10])
 
         if len(grp) == 1:
             domain_icon  = DOMAIN_ICON.get(row.get("domain") or "", "")
-            preview_text = str(row["body_preview"] or "")[:110]
+            full_text    = str(row["body_preview"] or "")
+            short_text   = full_text[:160] + ("…" if len(full_text) > 160 else "")
+            tooltip_text = full_text.replace("<", "&lt;").replace(">", "&gt;")
+            _tip = (
+                f'<span class="tip-wrap">'
+                f'<small style="color:#4a52a3;font-weight:500;cursor:default">{short_text}</small>'
+                f'<div class="tip-box">{tooltip_text}</div>'
+                f'</span>'
+            )
             if domain_icon:
-                c1.markdown(
-                    f'<span class="domain-circle">{domain_icon}</span> <small style="color:#4a52a3;font-weight:500">{preview_text}</small>',
-                    unsafe_allow_html=True,
-                )
+                c1.markdown(f'<span class="domain-circle">{domain_icon}</span>{_tip}', unsafe_allow_html=True)
             else:
-                c1.markdown(f'<small style="color:#4a52a3;font-weight:500">{preview_text}</small>', unsafe_allow_html=True)
+                c1.markdown(_tip, unsafe_allow_html=True)
 
             urg = (row.get("urgency") or "normal").lower()
             c2.markdown(
@@ -1225,15 +1379,14 @@ def render_ticket_table(tickets, team_members):
                 key=f"qs_{row['content_id']}",
                 on_change=_quick_status_save,
                 args=(row["content_id"], row.to_dict()),
+                format_func=lambda s: _QUICK_STATUS_LABELS.get(s, s),
                 label_visibility="collapsed",
             )
 
-            permalink = row.get("permalink") or ""
-            if permalink:
-                c4.markdown(f"[↗]({permalink})")
 
             if c5.button("→", key=f"open_{row['content_id']}"):
                 st.session_state._open_ticket = row["content_id"]
+                st.session_state._open_ticket_thread = row.get("thread_id") or row["content_id"]
                 st.rerun()
 
             _ca = row.get("assigned_to") or ""
@@ -1259,9 +1412,6 @@ def render_ticket_table(tickets, team_members):
             )
             c3.markdown(f'<span class="badge badge-open">{n_open} open</span>', unsafe_allow_html=True)
 
-            permalink = row.get("permalink") or ""
-            if permalink:
-                c4.markdown(f"[↗]({permalink})")
 
             if c5.button("→", key=f"open_grp_{gk}"):
                 st.session_state._open_group = (
@@ -1278,6 +1428,25 @@ def render_ticket_table(tickets, team_members):
                 unsafe_allow_html=True,
             )
 
+    if _shown == 0:
+        st.info("No tickets match the current filters.")
+
+    # ── Page navigation ───────────────────────────────────────────────────────
+    if _total_pages > 1:
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        _nc1, _nc2, _nc3 = st.columns([1, 2, 1])
+        if _nc1.button("← Prev", disabled=_page == 0, use_container_width=True, key="page_prev"):
+            st.session_state._ticket_page -= 1
+            st.rerun()
+        _nc2.markdown(
+            f'<div style="text-align:center;font-size:0.82rem;color:#6b7280;padding-top:8px">'
+            f'Page {_page + 1} of {_total_pages} &nbsp;·&nbsp; {_total_rows} tickets</div>',
+            unsafe_allow_html=True,
+        )
+        if _nc3.button("Next →", disabled=_page >= _total_pages - 1, use_container_width=True, key="page_next"):
+            st.session_state._ticket_page += 1
+            st.rerun()
+
 
 def _quick_status_save(content_id: str, row_dict: dict):
     new_status = st.session_state.get(f"qs_{content_id}")
@@ -1285,7 +1454,16 @@ def _quick_status_save(content_id: str, row_dict: dict):
         return
     assignee = row_dict.get("assigned_to") or ""
     domain   = row_dict.get("domain") or ""
-    bq_client.update_ticket_meta(content_id, new_status, assignee, domain)
+
+    # "not a question" → write feedback_reason so grant_classification_feedback
+    # view picks it up (view filters on feedback_reason IS NOT NULL) and uses
+    # this as a negative training example for the classifier.
+    feedback_reason = None
+    if new_status == "not_a_question":
+        feedback_reason = "flagged_via_quick_status"
+
+    bq_client.update_ticket_meta(content_id, new_status, assignee, domain, feedback_reason=feedback_reason)
+
     # If closed/cancelled with no prior team comment → log as potential false positive
     if new_status in ("closed", "cancelled") and not row_dict.get("team_commented"):
         bq_client.log_event(
@@ -1330,18 +1508,29 @@ with tab_main:
     b4.markdown(goal_card(answered_today, goal),                                       unsafe_allow_html=True)
 
     # ── Ticket list ───────────────────────────────────────────────────────────
-    st.markdown(f'<div class="section-card-title" style="padding:6px 0 10px">Tickets ({len(tickets)})</div>', unsafe_allow_html=True)
+    # Count unique member+thread groups — this is what the user actually sees,
+    # not raw ticket rows (multiple comments from one member in one thread = 1 row).
+    _unique_groups = tickets.apply(
+        lambda r: f"{r['member_id']}|{r['thread_id']}" if r.get("thread_id") else str(r["content_id"]),
+        axis=1,
+    ).nunique() if not tickets.empty else 0
+    _PAGE_SIZE = 25
+    _n_pages = max(1, -(-_unique_groups // _PAGE_SIZE))
+    _page_info = f" — page {st.session_state._ticket_page + 1}/{_n_pages}" if _n_pages > 1 else ""
+    st.markdown(f'<div class="section-card-title" style="padding:6px 0 10px">Tickets ({_unique_groups}){_page_info}</div>', unsafe_allow_html=True)
 
     # render_ticket_table is an @st.fragment — a status dropdown change inside it
     # only re-runs THIS fragment, not the sidebar, KPIs, or BQ queries above.
-    render_ticket_table(tickets, team_members)
+    render_ticket_table(tickets, team_members, filter_status)
 
     # Dialogs can't be opened from inside @st.fragment, so the fragment sets
     # session state and st.rerun() brings us here to open the dialog.
     if st.session_state._open_ticket:
         _cid = st.session_state._open_ticket
+        _tid_hint = st.session_state._open_ticket_thread
         st.session_state._open_ticket = None
-        show_ticket_dialog(_cid)
+        st.session_state._open_ticket_thread = None
+        show_ticket_dialog(_cid, thread_id_hint=_tid_hint)
 
     if st.session_state._open_group:
         _tid, _mid, _mname = st.session_state._open_group
@@ -1581,7 +1770,7 @@ with tab_settings:
 
 # ── ADMIN TAB ─────────────────────────────────────────────────────────────────
 with tab_admin:
-    _admin_api_key = st.secrets.get("mn_admin_api_key", "")
+    _admin_api_key = bq_client.get_mn_api_key(current_user) if current_user else None
 
     st.subheader("Grant Coaches")
     st.caption("Coaches listed here appear as assignees in the ticket list. Promoting a member to coach also gives them host role in Mighty Networks so they can generate their own API key.")
@@ -1607,18 +1796,30 @@ with tab_admin:
     st.divider()
     st.markdown("#### Add a Grant Coach")
 
-    @st.cache_data(ttl=30, show_spinner=False)
-    def _search(q):
-        return bq_client.search_members(q)
+    # Cache the full member list — search filters it in-memory so there's no BQ
+    # round-trip per keystroke. TTL=300 since the member list changes rarely.
+    @st.cache_data(ttl=300, show_spinner="Loading members…")
+    def _load_all_members():
+        return bq_client.search_members("", limit=5000)
+
+    _all_members = _load_all_members()
+    _existing_coach_ids = set(coaches_df["member_id"].tolist()) if not coaches_df.empty else set()
 
     search_query = st.text_input("Search member by name or email", placeholder="e.g. Jane Smith")
 
-    _q = search_query.strip()
+    _q = search_query.strip().lower()
     if len(_q) >= 2:
-        results = _search(_q)
+        results = _all_members[
+            _all_members.apply(
+                lambda r: _q in (r.get("full_name") or "").lower()
+                       or _q in (r.get("email_address") or "").lower(),
+                axis=1,
+            )
+            & ~_all_members["member_id"].isin(_existing_coach_ids)
+        ].head(20)
 
         if results.empty:
-            st.caption("No members found — try a different name or email.")
+            st.caption("No members found.")
         else:
             for _, member in results.iterrows():
                 m1, m2, m3 = st.columns([3, 2.5, 1.2])
@@ -1627,21 +1828,24 @@ with tab_admin:
 
                 if m3.button("Make Coach", key=f"promote_{member['member_id']}", type="primary"):
                     if not _admin_api_key:
-                        st.error("No MN admin API key configured. Add `mn_admin_api_key` to secrets.toml.")
+                        st.error("No MN API key found. Add yours in the ⚙️ Settings tab first.")
                     else:
-                        try:
-                            bq_client.mn_promote_to_host(int(member["member_id"]), _admin_api_key)
-                            bq_client.add_grant_coach(
-                                member_id=int(member["member_id"]),
-                                full_name=str(member["full_name"]),
-                                email=str(member.get("email_address") or ""),
-                                added_by=current_user or "admin",
-                            )
-                            st.cache_data.clear()
-                            st.session_state["invite_name"] = str(member["full_name"])
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed: {e}")
+                        # 1. Write to BQ + update UI immediately
+                        bq_client.add_grant_coach(
+                            member_id=int(member["member_id"]),
+                            full_name=str(member["full_name"]),
+                            email=str(member.get("email_address") or ""),
+                            added_by=current_user or "admin",
+                        )
+                        # 2. Fire MN host promotion in background — doesn't block UI
+                        _mid  = int(member["member_id"])
+                        _key  = _admin_api_key
+                        concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
+                            bq_client.mn_promote_to_host, _mid, _key
+                        )
+                        st.cache_data.clear()
+                        st.session_state["invite_name"] = str(member["full_name"])
+                        st.rerun()
 
     if "invite_name" in st.session_state:
         @st.dialog(f"Invite {st.session_state['invite_name']}")
@@ -1654,3 +1858,155 @@ with tab_admin:
                 del st.session_state["invite_name"]
                 st.rerun()
         _invite_dialog()
+
+
+# ── INBOX TAB ─────────────────────────────────────────────────────────────────
+_FEEDBACK_TYPES = {
+    "review":     ("⭐", "Review",     "Share how things are going — what's working, what's not, how you feel about the workflow."),
+    "problem":    ("🔴", "Problem",    "Something is broken, confusing, or getting in your way. Tell me exactly what happened."),
+    "suggestion": ("💡", "Suggestion", "An idea, improvement, or feature you'd like to see. No idea is too small."),
+}
+_FEEDBACK_STATUS_COLORS = {
+    "open":  "#f5c520",
+    "noted": "#4a52a3",
+    "done":  "#2e9b2e",
+}
+
+
+@st.fragment
+def render_inbox(current_user):
+    # ── Hero banner ───────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,{INDIGO} 0%,#2d6ee0 100%);
+                border-radius:16px;padding:28px 32px;margin-bottom:24px;color:#fff">
+      <div style="font-size:1.5rem;font-weight:700;margin-bottom:8px">📬 Team Inbox</div>
+      <div style="font-size:1rem;line-height:1.6;opacity:0.92">
+        This is your direct line to me. Submit a review, flag a problem, or drop a suggestion —
+        <strong>you cannot give me enough new input.</strong> Every submission becomes a ticket
+        and I will personally reply with exactly what we will do about it.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_form, col_inbox = st.columns([1, 1.6], gap="large")
+
+    # ── Submit form ───────────────────────────────────────────────────────────
+    with col_form:
+        st.markdown("### Submit something")
+
+        fb_type = st.radio(
+            "What kind of input is this?",
+            list(_FEEDBACK_TYPES.keys()),
+            format_func=lambda k: f"{_FEEDBACK_TYPES[k][0]}  {_FEEDBACK_TYPES[k][1]}",
+            horizontal=False,
+            key="fb_type_radio",
+        )
+        st.caption(_FEEDBACK_TYPES[fb_type][2])
+
+        fb_title = st.text_input("Title", placeholder="Short summary — one line", key="fb_title")
+        fb_body  = st.text_area(
+            "Details",
+            placeholder="Be as specific as possible. The more context you give, the better I can act on it.",
+            height=160,
+            key="fb_body",
+        )
+
+        if st.button("Send →", type="primary", use_container_width=True, key="fb_submit"):
+            if not fb_title.strip():
+                st.warning("Please add a title.")
+            elif not fb_body.strip():
+                st.warning("Please add some details.")
+            elif not current_user:
+                st.error("Could not identify your user — please reload.")
+            else:
+                bq_client.submit_team_feedback(
+                    submitted_by=current_user,
+                    feedback_type=fb_type,
+                    title=fb_title.strip(),
+                    body=fb_body.strip(),
+                )
+                st.success("Sent! I'll reply here as soon as possible.")
+                st.cache_data.clear()
+                st.rerun()
+
+    # ── Inbox list ────────────────────────────────────────────────────────────
+    with col_inbox:
+        st.markdown("### All submissions")
+
+        @st.cache_data(ttl=60)
+        def load_team_feedback():
+            return bq_client.get_team_feedback()
+
+        fb_df = load_team_feedback()
+
+        if fb_df.empty:
+            st.info("No submissions yet — be the first!")
+        else:
+            _fc1, _fc2 = st.columns(2)
+            _filter_type   = _fc1.selectbox(
+                "Type", ["All"] + list(_FEEDBACK_TYPES.keys()),
+                format_func=lambda k: "All" if k == "All" else f"{_FEEDBACK_TYPES[k][0]} {_FEEDBACK_TYPES[k][1]}",
+                key="fb_filter_type",
+            )
+            _filter_status = _fc2.selectbox("Status", ["All", "open", "noted", "done"], key="fb_filter_status")
+
+            rows = fb_df.copy()
+            if _filter_type   != "All": rows = rows[rows["feedback_type"] == _filter_type]
+            if _filter_status != "All": rows = rows[rows["status"]        == _filter_status]
+
+            st.caption(f"{len(rows)} submission{'s' if len(rows) != 1 else ''}")
+
+            for _, row in rows.iterrows():
+                icon, label, _ = _FEEDBACK_TYPES.get(row["feedback_type"], ("📝", row["feedback_type"], ""))
+                status_color   = _FEEDBACK_STATUS_COLORS.get(row["status"], "#aaa")
+                date_str       = str(row["created_at"])[:10]
+
+                with st.expander(
+                    f"{icon} **{row['title']}**  ·  {row['submitted_by'].split('@')[0]}  ·  {date_str}",
+                    expanded=False,
+                ):
+                    st.markdown(
+                        f'<span style="display:inline-block;padding:2px 10px;border-radius:99px;'
+                        f'background:{status_color}22;color:{status_color};font-weight:600;'
+                        f'font-size:0.78rem;margin-bottom:8px">{row["status"].upper()}</span>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(row["body"])
+
+                    if row.get("reply_text"):
+                        st.divider()
+                        st.markdown(
+                            f'<div style="background:#f0f4ff;border-left:3px solid {INDIGO};'
+                            f'padding:10px 14px;border-radius:0 8px 8px 0;margin-top:4px">'
+                            f'<div style="font-size:0.75rem;color:#6b7280;margin-bottom:4px">'
+                            f'Reply from {row.get("replied_by","admin").split("@")[0]} · {str(row.get("replied_at",""))[:10]}</div>'
+                            f'<div>{row["reply_text"]}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+
+                    if current_user == "martin.j.menke@gmail.com":
+                        st.divider()
+                        _reply_text = st.text_area(
+                            "Your reply", key=f"reply_text_{row['feedback_id']}",
+                            value=row.get("reply_text") or "",
+                            placeholder="What will we do about this?",
+                            height=80,
+                        )
+                        _new_status = st.selectbox(
+                            "Update status", ["open", "noted", "done"],
+                            index=["open", "noted", "done"].index(row["status"]) if row["status"] in ["open", "noted", "done"] else 0,
+                            key=f"reply_status_{row['feedback_id']}",
+                        )
+                        if st.button("Save reply", key=f"reply_save_{row['feedback_id']}", type="primary"):
+                            bq_client.reply_team_feedback(
+                                feedback_id=row["feedback_id"],
+                                reply_text=_reply_text.strip(),
+                                replied_by=current_user,
+                                new_status=_new_status,
+                            )
+                            st.cache_data.clear()
+                            st.rerun()
+
+
+with tab_inbox:
+    render_inbox(current_user)

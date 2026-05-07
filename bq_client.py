@@ -19,6 +19,13 @@ except Exception as _e:
     )
     raise SystemExit(1) from _e
 
+# Cache tickets table schema at startup — avoids a get_table() API call on every
+# ticket detail/thread query. Falls back gracefully if the call fails.
+try:
+    _TICKETS_COLS: set[str] = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+except Exception:
+    _TICKETS_COLS: set[str] = set()
+
 
 def log_event(level: str, source: str, message: str, detail: str = None):
     """Streaming-insert a log row into app_logs. Never raises — logging must not break the caller."""
@@ -100,7 +107,7 @@ def get_tickets(
 
     # Build EXCEPT and CASE clauses based on what columns actually exist in the table.
     # This makes the query forward/backward compatible as Dataform rebuilds the schema.
-    _gt_cols = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
     _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
     _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
     _optional_except = ["difficulty", "team_comment_replied"]
@@ -128,7 +135,7 @@ def get_tickets(
         )
         SELECT
             *,
-            LEFT(body, 120) AS body_preview,
+            LEFT(body, 600) AS body_preview,
             CASE
                 WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24 THEN 'normal'
                 WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 48 THEN 'urgent'
@@ -145,7 +152,7 @@ def get_tickets(
 
 
 def get_ticket_detail(content_id: str) -> dict:
-    _gt_cols = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
     _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
     _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
     _optional_except = ["difficulty", "team_comment_replied"]
@@ -183,7 +190,7 @@ def get_ticket_detail(content_id: str) -> dict:
 
 def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
     """All tickets from one member in one thread (all statuses), used by the group dialog."""
-    _gt_cols = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
     _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
     _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
     _optional_except = ["difficulty", "team_comment_replied"]
@@ -280,8 +287,16 @@ def save_mn_api_key(email: str, api_key: str):
 
 
 def search_members(query: str, limit: int = 20) -> pd.DataFrame:
-    """Search community members by name or email. Excludes existing grant coaches."""
+    """Search community members by name or email.
+    Pass query='' to load all active members (used for in-memory search cache)."""
     q = query.replace("'", "\\'")
+    where_search = (
+        f"""AND (
+              LOWER(CONCAT(COALESCE(m.first_name,''), ' ', COALESCE(m.last_name,''))) LIKE LOWER('%{q}%')
+              OR LOWER(m.email_address) LIKE LOWER('%{q}%')
+          )"""
+        if q else ""
+    )
     sql = f"""
         SELECT
             m.member_id,
@@ -292,13 +307,7 @@ def search_members(query: str, limit: int = 20) -> pd.DataFrame:
         FROM `{config.PROJECT_ID}.dataform.core_members` m
         WHERE m.client_id = 'lesko_4022250'
           AND LOWER(m.member_status) = 'active'
-          AND (
-              LOWER(CONCAT(COALESCE(m.first_name,''), ' ', COALESCE(m.last_name,''))) LIKE LOWER('%{q}%')
-              OR LOWER(m.email_address) LIKE LOWER('%{q}%')
-          )
-          AND m.member_id NOT IN (
-              SELECT member_id FROM `{config.GRANT_COACHES_TABLE}`
-          )
+          {where_search}
         ORDER BY m.last_name, m.first_name
         LIMIT {limit}
     """
@@ -307,9 +316,44 @@ def search_members(query: str, limit: int = 20) -> pd.DataFrame:
 
 def get_grant_coaches() -> pd.DataFrame:
     sql = f"""
-        SELECT gc.member_id, gc.full_name, gc.email, gc.added_at, gc.added_by
+        SELECT gc.member_id, gc.full_name, gc.email, gc.login_email, gc.added_at, gc.added_by
         FROM `{config.GRANT_COACHES_TABLE}` gc
         ORDER BY gc.added_at DESC
+    """
+    return client.query(sql).to_dataframe()
+
+
+def get_coach_by_login_email(login_email: str):
+    """Return the coach row for a given login email (checks both login_email and MN email)."""
+    e = login_email.replace("'", "\\'")
+    sql = f"""
+        SELECT member_id, full_name, email, login_email
+        FROM `{config.GRANT_COACHES_TABLE}`
+        WHERE login_email = '{e}' OR email = '{e}'
+        LIMIT 1
+    """
+    df = client.query(sql).to_dataframe()
+    return df.iloc[0].to_dict() if not df.empty else None
+
+
+def link_coach_login_email(member_id: int, login_email: str):
+    """Save the portal login email for a coach so future logins are recognised."""
+    e = login_email.replace("'", "\\'")
+    sql = f"""
+        UPDATE `{config.GRANT_COACHES_TABLE}`
+        SET login_email = '{e}'
+        WHERE member_id = {member_id}
+    """
+    client.query(sql).result()
+
+
+def get_unlinked_coaches() -> pd.DataFrame:
+    """Coaches that haven't linked a portal login yet (login_email is NULL)."""
+    sql = f"""
+        SELECT member_id, full_name, email
+        FROM `{config.GRANT_COACHES_TABLE}`
+        WHERE login_email IS NULL OR login_email = ''
+        ORDER BY full_name
     """
     return client.query(sql).to_dataframe()
 
@@ -336,19 +380,22 @@ def remove_grant_coach(member_id: int):
 
 def mn_promote_to_host(member_id: int, admin_api_key: str) -> dict:
     """Promote a community member to host role via MN Admin API."""
-    import urllib.request, json as _json
-    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/members/{member_id}/"
-    data = _json.dumps({"role": "host"}).encode()
-    req = urllib.request.Request(
-        url, data=data,
-        headers={
-            "Authorization": f"Bearer {admin_api_key}",
-            "Content-Type":  "application/json",
-        },
-        method="PATCH",
-    )
-    with urllib.request.urlopen(req) as resp:
-        return _json.loads(resp.read())
+    import requests as _requests
+    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/members/{member_id}"
+    headers = {
+        "Authorization": f"Bearer {admin_api_key.strip()}",
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+        "User-Agent":    "mn-api-client/1.0",
+    }
+    response = _requests.patch(url, headers=headers, json={"role": "host"}, timeout=30)
+    if response.status_code in (200, 201, 204):
+        return response.json() if response.content else {}
+    try:
+        detail = response.json()
+    except Exception:
+        detail = response.text
+    raise RuntimeError(f"HTTP {response.status_code} — {detail}")
 
 
 def post_mn_comment(post_id: str, body: str, api_key: str, reply_to_id: int = None) -> dict:
@@ -593,7 +640,7 @@ def _live_status_cte() -> tuple[str, str]:
     Used by both get_open_stats() and get_daily_stats() so their KPI numbers
     always match the ticket list (which also uses a live join).
     """
-    _gt_cols = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
     _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
     return _team_replied_sql
 
@@ -764,7 +811,7 @@ def get_member_history(member_id: int, exclude_content_id: str = None) -> pd.Dat
         SELECT
             content_id,
             content_type,
-            LEFT(body, 120) AS body_preview,
+            LEFT(body, 600) AS body_preview,
             created_at,
             ticket_status
         FROM `{config.TICKETS_TABLE}`
@@ -821,3 +868,46 @@ def get_report_data(report_type: str, date_from: str, date_to: str) -> pd.DataFr
         return pd.DataFrame()
 
     return client.query(sql).to_dataframe()
+
+
+# ── Team Feedback ─────────────────────────────────────────────────────────────
+
+TEAM_FEEDBACK_TABLE = f"{config.PROJECT_ID}.{config.DATASET}.team_feedback"
+
+
+def submit_team_feedback(submitted_by: str, feedback_type: str, title: str, body: str):
+    now = datetime.datetime.utcnow().isoformat()
+    fid = str(uuid.uuid4())
+    sql = f"""
+        INSERT INTO `{TEAM_FEEDBACK_TABLE}`
+          (feedback_id, submitted_by, feedback_type, title, body, status, created_at)
+        VALUES
+          ('{fid}', '{submitted_by}', '{feedback_type}',
+           '{title.replace("'", "\\'")}',
+           '{body.replace("'", "\\'")}',
+           'open', TIMESTAMP '{now}')
+    """
+    client.query(sql).result()
+
+
+def get_team_feedback() -> pd.DataFrame:
+    sql = f"""
+        SELECT *
+        FROM `{TEAM_FEEDBACK_TABLE}`
+        ORDER BY created_at DESC
+    """
+    return client.query(sql).to_dataframe()
+
+
+def reply_team_feedback(feedback_id: str, reply_text: str, replied_by: str, new_status: str):
+    now = datetime.datetime.utcnow().isoformat()
+    sql = f"""
+        UPDATE `{TEAM_FEEDBACK_TABLE}`
+        SET
+          reply_text = '{reply_text.replace("'", "\\'")}',
+          replied_by = '{replied_by}',
+          replied_at = TIMESTAMP '{now}',
+          status     = '{new_status}'
+        WHERE feedback_id = '{feedback_id}'
+    """
+    client.query(sql).result()

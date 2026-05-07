@@ -11,7 +11,7 @@ APP_NAME     = "Lesko Help Desk"
 APP_VERSION  = "0.1"
 DAILY_GOAL   = 50
 
-TICKET_STATUSES    = ["open", "closed", "cancelled"]
+TICKET_STATUSES    = ["open", "assigned", "closed", "cancelled", "flagged"]
 FEEDBACK_STATUSES  = ["not_a_question", "confirmed_question"]
 
 MEMBER_ASSIGNMENTS_TABLE = f"{PROJECT_ID}.{DATASET}.member_assignment_overrides"

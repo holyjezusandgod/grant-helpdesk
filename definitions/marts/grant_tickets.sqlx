@@ -18,7 +18,7 @@ SELECT
   c.last_activity_at,
 
   -- member fields
-  m.member_id,
+  c.member_id,
   m.full_name          AS member_name,
   m.first_name,
   m.last_name,
