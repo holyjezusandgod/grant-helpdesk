@@ -878,13 +878,15 @@ TEAM_FEEDBACK_TABLE = f"{config.PROJECT_ID}.{config.DATASET}.team_feedback"
 def submit_team_feedback(submitted_by: str, feedback_type: str, title: str, body: str):
     now = datetime.datetime.utcnow().isoformat()
     fid = str(uuid.uuid4())
+    safe_title = title.replace("'", "\\'")
+    safe_body  = body.replace("'", "\\'")
     sql = f"""
         INSERT INTO `{TEAM_FEEDBACK_TABLE}`
           (feedback_id, submitted_by, feedback_type, title, body, status, created_at)
         VALUES
           ('{fid}', '{submitted_by}', '{feedback_type}',
-           '{title.replace("'", "\\'")}',
-           '{body.replace("'", "\\'")}',
+           '{safe_title}',
+           '{safe_body}',
            'open', TIMESTAMP '{now}')
     """
     client.query(sql).result()
@@ -901,10 +903,11 @@ def get_team_feedback() -> pd.DataFrame:
 
 def reply_team_feedback(feedback_id: str, reply_text: str, replied_by: str, new_status: str):
     now = datetime.datetime.utcnow().isoformat()
+    safe_reply = reply_text.replace("'", "\\'")
     sql = f"""
         UPDATE `{TEAM_FEEDBACK_TABLE}`
         SET
-          reply_text = '{reply_text.replace("'", "\\'")}',
+          reply_text = '{safe_reply}',
           replied_by = '{replied_by}',
           replied_at = TIMESTAMP '{now}',
           status     = '{new_status}'
