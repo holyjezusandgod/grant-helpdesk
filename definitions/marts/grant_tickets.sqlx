@@ -17,18 +17,18 @@ SELECT
   c.updated_at,
   c.last_activity_at,
 
-  -- member fields
+  -- member fields (stg_grant_members for regular members; core_members fallback for hosts/moderators)
   c.member_id,
-  m.full_name          AS member_name,
-  m.first_name,
-  m.last_name,
-  m.email_address,
-  m.state              AS member_state,
-  m.city               AS member_city,
-  m.avatar_url,
-  m.join_date,
-  m.last_visited_network,
-  m.member_permalink,
+  COALESCE(m.full_name, CONCAT(COALESCE(cm.first_name, ''), ' ', COALESCE(cm.last_name, ''))) AS member_name,
+  COALESCE(m.first_name,    cm.first_name)    AS first_name,
+  COALESCE(m.last_name,     cm.last_name)     AS last_name,
+  COALESCE(m.email_address, cm.email_address) AS email_address,
+  COALESCE(m.state,         cm.state)         AS member_state,
+  COALESCE(m.city,          cm.city)          AS member_city,
+  COALESCE(m.avatar_url,    cm.avatar_url)    AS avatar_url,
+  COALESCE(m.join_date,     cm.join_date)     AS join_date,
+  COALESCE(m.last_visited_network, cm.last_visited_network) AS last_visited_network,
+  COALESCE(m.member_permalink,     cm.permalink)            AS member_permalink,
 
   -- team engagement signals (failsafe)
   COALESCE(te.team_commented,        FALSE) AS team_commented,
@@ -61,6 +61,10 @@ FROM ${ref("grant_content")} c
 
 LEFT JOIN ${ref("stg_grant_members")} m
   ON c.member_id = m.member_id
+
+LEFT JOIN ${ref("core_members")} cm
+  ON c.member_id = cm.member_id
+ AND cm.client_id = 'lesko_4022250'
 
 LEFT JOIN ${ref("stg_team_engagement")} te
   ON c.content_id = te.content_id
