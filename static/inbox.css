@@ -1,0 +1,49 @@
+/*
+ * grant-helpdesk / static / inbox.css  —  Team Inbox tab
+ *
+ * Styles for the Team Inbox section where coaches submit
+ * feedback, reviews, and suggestions to the admin.
+ *
+ * DEPENDS ON: tokens.css
+ */
+
+
+/* ═════════════════════════════════════════════
+   HERO BANNER
+   The gradient header at the top of the inbox tab.
+═════════════════════════════════════════════ */
+.inbox-hero {
+    background:    linear-gradient(135deg, var(--color-primary) 0%, var(--color-info) 100%);
+    border-radius: var(--radius-lg);
+    padding:       var(--space-8);
+    margin-bottom: var(--space-6);
+    color:         white;
+}
+
+.inbox-hero-title {
+    font-size:     var(--font-xl);
+    font-weight:   700;
+    margin-bottom: var(--space-2);
+}
+
+.inbox-hero-body {
+    font-size:   var(--font-md);
+    line-height: 1.6;
+    opacity:     0.92;
+}
+
+
+/* ═════════════════════════════════════════════
+   FEEDBACK STATUS BADGE
+   The small pill showing open / noted / done.
+   Color is set inline (dynamic per status) but
+   shape and text are controlled here.
+═════════════════════════════════════════════ */
+.feedback-badge {
+    display:       inline-block;
+    padding:       var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    font-weight:   600;
+    font-size:     var(--font-xs);
+    margin-bottom: var(--space-2);
+}

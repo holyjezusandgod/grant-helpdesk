@@ -1,0 +1,122 @@
+/*
+ * lesko-ui / tokens.css  —  Layer 1: Design Tokens
+ *
+ * This is the SINGLE SOURCE OF TRUTH for every visual decision.
+ * Every color, every size, every shadow lives here as a named variable.
+ *
+ * HOW TO USE:
+ *   Instead of writing:  color: #4a52a3
+ *   You write:           color: var(--color-primary)
+ *
+ * WHY:
+ *   If we ever want to change the brand color, we change ONE line here
+ *   and it updates everywhere in the entire app automatically.
+ *
+ * RULE: No magic numbers anywhere in component CSS. Only var(--…) references.
+ */
+
+:root {
+
+    /* ─────────────────────────────────────────────
+       BRAND COLORS
+       The raw palette — what the colors ARE.
+       Do not use these directly in components.
+       Use the semantic colors below instead.
+    ───────────────────────────────────────────── */
+    --color-indigo:  #4a52a3;
+    --color-yellow:  #f5c520;
+    --color-green:   #2e9b2e;
+    --color-blue:    #2d6ee0;
+    --color-red:     #e03c3c;
+
+    /* ─────────────────────────────────────────────
+       SEMANTIC COLORS
+       What the color MEANS, not what it looks like.
+       Use these in components — e.g. "this is a
+       danger state" not "this is red".
+    ───────────────────────────────────────────── */
+    --color-primary:    var(--color-indigo);
+    --color-success:    var(--color-green);
+    --color-warning:    var(--color-yellow);
+    --color-danger:     var(--color-red);
+    --color-info:       var(--color-blue);
+
+    /* ─────────────────────────────────────────────
+       SURFACE COLORS
+       Backgrounds for different layers of the UI.
+       Think of surfaces like sheets of paper stacked
+       on top of each other — bg is the desk, surface
+       is a sheet of paper, surface-2 is a sticky note.
+    ───────────────────────────────────────────── */
+    --color-bg:           #e8eef6;   /* page background — the "desk" */
+    --color-surface:      #ffffff;   /* cards, sidebar, header — "paper" */
+    --color-surface-2:    #f5f7fb;   /* input fields, hover rows — "sticky note" */
+    --color-primary-tint: #f0f4ff;   /* very light indigo — post cards, reply blocks */
+
+    /* ─────────────────────────────────────────────
+       TEXT COLORS
+       Three levels of emphasis.
+       Use muted for labels, faint for dates/metadata.
+    ───────────────────────────────────────────── */
+    --color-text:       #111827;   /* primary text — full strength */
+    --color-text-muted: #6b7280;   /* labels, captions — medium strength */
+    --color-text-faint: #9ca3af;   /* placeholders, dates — low strength */
+
+    /* ─────────────────────────────────────────────
+       SPACING SCALE
+       Based on a 4px grid. Every gap, padding, and
+       margin in the app should be a multiple of 4px.
+       Use these names — never write px values directly.
+    ───────────────────────────────────────────── */
+    --space-1:   4px;
+    --space-2:   8px;
+    --space-3:  12px;
+    --space-4:  16px;
+    --space-5:  20px;
+    --space-6:  24px;
+    --space-8:  32px;
+    --space-10: 40px;
+
+    /* ─────────────────────────────────────────────
+       BORDER RADIUS
+       Controls how rounded corners are.
+       sm = subtle rounding (chips, metric cards)
+       md = moderate (comments, inner frames)
+       lg = noticeable (buttons, sidebar frames)
+       xl = large (section cards, header card)
+       pill = fully round ends (badges, avatars)
+    ───────────────────────────────────────────── */
+    --radius-sm:   8px;
+    --radius-md:   12px;
+    --radius-lg:   16px;
+    --radius-xl:   20px;
+    --radius-pill: 999px;
+
+    /* ─────────────────────────────────────────────
+       TYPOGRAPHY
+       Font sizes using rem units.
+       1rem = 14px (set in base.css).
+       So 0.82rem ≈ 11.5px, 1.3rem ≈ 18px, etc.
+    ───────────────────────────────────────────── */
+    --font-family:  "Inter", "Helvetica Neue", Arial, sans-serif;
+
+    --font-xs:   0.68rem;   /* uppercase labels, tiny metadata  ~9.5px */
+    --font-sm:   0.82rem;   /* captions, secondary info        ~11.5px */
+    --font-base: 0.9rem;    /* body text, ticket content          ~13px */
+    --font-md:   1rem;      /* card titles, tab labels            ~14px */
+    --font-lg:   1.3rem;    /* dialog headings                  ~18.2px */
+    --font-xl:   1.5rem;    /* page headings                      ~21px */
+
+    /* KPI numbers — these are the big numbers on the dashboard cards */
+    --font-kpi-lg: 2.4rem;  /* primary KPI value               ~33.6px */
+    --font-kpi-md: 2rem;    /* secondary KPI value               ~28px */
+
+    /* ─────────────────────────────────────────────
+       SHADOWS
+       card = subtle lift, used on cards and panels
+       modal = stronger lift, used on dialogs/popups
+    ───────────────────────────────────────────── */
+    --shadow-card:  0 4px 24px rgba(74, 82, 163, 0.10);
+    --shadow-modal: 0 8px 32px rgba(74, 82, 163, 0.18);
+
+}

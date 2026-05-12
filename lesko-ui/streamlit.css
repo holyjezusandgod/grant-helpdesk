@@ -1,0 +1,221 @@
+/*
+ * lesko-ui / streamlit.css  —  Layer 4: Streamlit Widget Overrides
+ *
+ * WHAT THIS FILE IS FOR:
+ *   Streamlit generates its own HTML with its own class names and
+ *   data-testid attributes. We have no control over that HTML — we
+ *   can't add our own class names to Streamlit's buttons or sidebar.
+ *   So instead, we TARGET Streamlit's own selectors and override
+ *   their styles to match our design tokens.
+ *
+ * WHY IT'S A SEPARATE FILE:
+ *   These selectors are Streamlit-specific and will never appear in
+ *   a non-Streamlit app. Keeping them isolated means if we ever move
+ *   to a different framework, we just delete this one file.
+ *
+ * HOW STREAMLIT INJECTS CSS:
+ *   Streamlit only allows CSS injection via st.markdown with a style block.
+ *   The ui_theme.py file (Step 5) handles that injection — it reads all
+ *   CSS files and injects them in one call. You never need to write
+ *   <style> blocks in app.py again.
+ *
+ * IMPORTANT: Load this file AFTER tokens.css — it uses var(--…) tokens.
+ *
+ * TABLE OF CONTENTS:
+ *   1. Page background
+ *   2. Sidebar
+ *   3. Tabs
+ *   4. Buttons
+ *   5. Input fields
+ *   6. Metric containers (reports tab)
+ */
+
+
+/* ═════════════════════════════════════════════
+   1. PAGE BACKGROUND
+   .stApp is Streamlit's root wrapper element.
+   We set the background to our --color-bg token
+   so the whole page has the light blue-grey tint.
+═════════════════════════════════════════════ */
+.stApp {
+    background-color: var(--color-bg) !important;
+}
+
+section[data-testid="stMain"] > div {
+    background-color: var(--color-bg) !important;
+}
+
+/* Reduce the default top/bottom padding Streamlit adds to the main content area */
+.main .block-container {
+    padding-top:    var(--space-4) !important;
+    padding-bottom: var(--space-8) !important;
+}
+
+
+/* ═════════════════════════════════════════════
+   2. SIDEBAR
+   Streamlit's sidebar is identified by the
+   data-testid="stSidebar" attribute.
+
+   We override:
+   - Background colour → white (our --color-surface)
+   - Right border → subtle separator
+   - All text → --color-text
+   - Labels on filters → small, uppercase, muted
+   - Section headings → --color-text
+   - Input field backgrounds → --color-surface-2
+═════════════════════════════════════════════ */
+[data-testid="stSidebar"] {
+    background-color: var(--color-surface) !important;
+    border-right:     1px solid var(--color-bg) !important;
+}
+
+/* All text inside the sidebar defaults to our primary text colour */
+[data-testid="stSidebar"] * {
+    color: var(--color-text) !important;
+}
+
+/* Filter labels — uniform, matching tbl-header in the ticket table */
+[data-testid="stSidebar"] label {
+    font-family:    var(--font-family) !important;
+    color:          var(--color-text-faint) !important;
+    font-size:      var(--font-xs) !important;
+    font-weight:    600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.06em !important;
+}
+
+/* Headings inside the sidebar */
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: var(--color-text) !important;
+}
+
+/* Divider lines inside the sidebar */
+[data-testid="stSidebar"] hr {
+    border-color: var(--color-bg) !important;
+}
+
+/* Muted paragraph text (e.g. helper text below filters) */
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    color: var(--color-text-muted) !important;
+}
+
+/* Input field and select box backgrounds — slightly off-white, no border, rounded */
+[data-testid="stSidebar"] [data-baseweb="select"] > div,
+[data-testid="stSidebar"] [data-baseweb="input"] > div {
+    background-color: var(--color-surface-2) !important;
+    border-radius:    var(--radius-md) !important;
+    border:           none !important;
+}
+
+
+/* ═════════════════════════════════════════════
+   3. TABS
+   Streamlit renders tabs as <button> elements with
+   data-baseweb="tab". We restyle the whole tab bar
+   to look like a pill container with a highlighted
+   active tab.
+
+   Default tab:  muted text, no background
+   Active tab:   primary colour background, white text
+   Tab bar:      white pill container with padding
+═════════════════════════════════════════════ */
+
+/* The tab bar container */
+[data-baseweb="tab-list"] {
+    background:    var(--color-surface) !important;
+    border-radius: var(--radius-pill) !important;
+    padding:       var(--space-1) !important;
+    gap:           var(--space-1) !important;
+    margin-bottom: var(--space-3) !important;
+}
+
+/* Individual tab button — default state */
+button[data-baseweb="tab"] {
+    font-weight:   500 !important;
+    color:         var(--color-text-muted) !important;
+    border-radius: var(--radius-lg) !important;
+    padding:       var(--space-2) var(--space-5) !important;
+    font-size:     var(--font-sm) !important;
+    transition:    all 0.15s;
+}
+
+/* Active (selected) tab */
+button[data-baseweb="tab"][aria-selected="true"] {
+    background-color: var(--color-primary) !important;
+    color:            white !important;
+    border-bottom:    none !important;
+}
+
+/* Hide Streamlit's default tab underline indicators — we don't need them */
+[data-baseweb="tab-highlight"] { display: none !important; }
+[data-baseweb="tab-border"]    { display: none !important; }
+
+
+/* ═════════════════════════════════════════════
+   4. BUTTONS
+   Streamlit has two button types: primary and secondary.
+   We restyle both to match our design system.
+
+   Primary button:   indigo background, pill shape
+   Secondary button: light indigo tint, indigo text
+═════════════════════════════════════════════ */
+button[data-testid="baseButton-primary"] {
+    background-color: var(--color-primary) !important;
+    color:            white !important;
+    border:           none !important;
+    border-radius:    var(--radius-pill) !important;
+    font-weight:      500 !important;
+}
+
+button[data-testid="baseButton-primary"]:hover {
+    background-color: #3a4193 !important;   /* slightly darker indigo on hover */
+}
+
+button[data-testid="baseButton-secondary"] {
+    background-color: #eef0fb !important;
+    color:            var(--color-primary) !important;
+    border:           none !important;
+    border-radius:    var(--radius-pill) !important;
+    font-weight:      500 !important;
+}
+
+button[data-testid="baseButton-secondary"]:hover {
+    background-color: #dde0f5 !important;
+}
+
+
+/* ═════════════════════════════════════════════
+   5. INPUT FIELDS (global, outside sidebar)
+   Rounds the corners of all text inputs and
+   select boxes in the main content area too.
+═════════════════════════════════════════════ */
+[data-baseweb="select"] > div,
+[data-baseweb="input"] > div {
+    border-radius: var(--radius-md) !important;
+}
+
+
+/* ═════════════════════════════════════════════
+   6. METRIC CONTAINERS (reports tab)
+   st.metric() renders with data-testid="metric-container".
+   We style it as a card with a left accent border.
+═════════════════════════════════════════════ */
+[data-testid="metric-container"] {
+    background:    var(--color-surface);
+    border-left:   4px solid var(--color-primary);
+    border-radius: var(--radius-sm);
+    padding:       var(--space-3) var(--space-4) !important;
+}
+
+[data-testid="metric-container"] label {
+    color:     var(--color-text-muted) !important;
+    font-size: var(--font-sm) !important;
+}
+
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color:       var(--color-text) !important;
+    font-weight: 500;
+}

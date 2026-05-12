@@ -1,0 +1,30 @@
+/* Gap between KPI columns */
+[data-testid="stColumns"]:has(.kpi-card),
+[data-testid="stColumns"]:has(.kpi-goal-card) {
+    gap: var(--space-3) !important;
+    margin-bottom: var(--space-3);
+}
+
+.kpi-card {
+    background:    var(--color-surface);
+    border-radius: var(--radius-xl);
+    padding:       var(--space-5) var(--space-6);
+    box-shadow:    var(--shadow-card);
+    min-height:    90px;
+}
+
+.kpi-label {
+    font-size:     var(--font-sm);
+    color:         var(--color-text-muted);
+    font-weight:   500;
+    margin-bottom: var(--space-2);
+}
+
+.kpi-value {
+    font-size:   var(--font-kpi-lg);
+    font-weight: 600;
+    color:       var(--color-text);
+    line-height: 1;
+}
+
+

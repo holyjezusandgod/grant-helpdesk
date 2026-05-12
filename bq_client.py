@@ -58,7 +58,7 @@ def get_unreviewed_rejects() -> pd.DataFrame:
 def get_team_members() -> list[str]:
     sql = f"""
         SELECT full_name
-        FROM `{config.TEAM_TABLE}`
+        FROM `{config.GRANT_COACHES_TABLE}`
         ORDER BY full_name
     """
     rows = client.query(sql).to_dataframe()
@@ -75,7 +75,7 @@ def get_tickets(
 
     domain=None,
 ) -> pd.DataFrame:
-    filters = []
+    filters = ["body IS NOT NULL AND TRIM(body) != ''"]
 
     if status and status != "All":
         filters.append(f"ticket_status = '{status}'")
@@ -806,18 +806,33 @@ def get_thread(thread_id: str) -> pd.DataFrame:
 
 
 def get_member_history(member_id: int, exclude_content_id: str = None) -> pd.DataFrame:
-    exclude = f"AND content_id != '{exclude_content_id}'" if exclude_content_id else ""
+    exclude = f"AND gt.content_id != '{exclude_content_id}'" if exclude_content_id else ""
+    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
     sql = f"""
         SELECT
-            content_id,
-            content_type,
-            LEFT(body, 600) AS body_preview,
-            created_at,
-            ticket_status
-        FROM `{config.TICKETS_TABLE}`
-        WHERE member_id = {member_id}
-        {exclude}
-        ORDER BY created_at DESC
+            gt.content_id,
+            gt.content_type,
+            gt.thread_id,
+            gt.permalink,
+            LEFT(gt.body, 300) AS body_preview,
+            gt.created_at,
+            CASE
+                WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
+                WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
+                WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
+                ELSE 'open'
+            END AS ticket_status
+        FROM `{config.TICKETS_TABLE}` gt
+        LEFT JOIN (
+            SELECT * FROM `{config.META_TABLE}`
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+        ) tm ON gt.content_id = tm.content_id
+        WHERE gt.member_id = {member_id}
+          {exclude}
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+        ORDER BY gt.created_at DESC
+        LIMIT 20
     """
     return client.query(sql).to_dataframe()
 

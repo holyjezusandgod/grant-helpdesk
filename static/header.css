@@ -1,0 +1,173 @@
+/*
+ * grant-helpdesk / static / header.css  —  Zone 2 + 3: Header & Tab Navigation
+ *
+ * Zone 2: The app header bar — logo, app name, subtitle, user pill.
+ *         Appears once at the top of the page. Sets the brand tone.
+ *
+ * Zone 3: The tab navigation row — Tickets / Reports / etc.
+ *         Streamlit tab overrides live in lesko-ui/streamlit.css.
+ *         This file only adds the outer container wrapper if needed.
+ *
+ * DEPENDS ON: tokens.css (loaded first by ui_theme.inject())
+ *
+ * HTML STRUCTURE (Zone 2):
+ *
+ *   <div class="lesko-header-card">
+ *     <div class="header-logo">L</div>
+ *     <div>
+ *       <span class="header-app-name">Grant Helpdesk</span>
+ *       <span class="header-sub">Grant support queue</span>
+ *     </div>
+ *     <div class="header-user-pill">
+ *       <div class="header-user-avatar">ML</div>
+ *       <span class="header-user-name">Martin</span>
+ *     </div>
+ *   </div>
+ */
+
+
+/* ═════════════════════════════════════════════
+   LOGIN PAGE
+   Shown before the user authenticates.
+   Full-screen centered card with logo + buttons.
+═════════════════════════════════════════════ */
+.login-page {
+    display:         flex;
+    flex-direction:  column;
+    align-items:     center;
+    justify-content: center;
+    min-height:      70vh;
+    gap:             var(--space-3);
+}
+
+.login-card {
+    background:    var(--color-surface);
+    border-radius: var(--radius-xl);
+    padding:       var(--space-10) var(--space-8);
+    text-align:    center;
+    max-width:     420px;
+    box-shadow:    var(--shadow-modal);
+}
+
+.login-logo {
+    width:           64px;
+    height:          64px;
+    border-radius:   var(--radius-lg);
+    background:      var(--color-primary);
+    display:         inline-flex;
+    align-items:     center;
+    justify-content: center;
+    font-size:       var(--font-xl);
+    color:           white;
+    font-weight:     800;
+    margin-bottom:   var(--space-4);
+}
+
+.login-title {
+    margin:      0 0 var(--space-2);
+    color:       var(--color-text);
+    font-size:   var(--font-xl);
+    font-weight: 700;
+}
+
+.login-sub {
+    color:         var(--color-text-faint);
+    font-size:     var(--font-base);
+    margin:        0 0 var(--space-8);
+}
+
+
+/* ─────────────────────────────────────────────
+   HEADER CARD  (Zone 2)
+   The white pill-shaped bar across the top.
+   Uses flexbox so the logo, title, and user pill
+   sit in a horizontal row with space between them.
+───────────────────────────────────────────── */
+.lesko-header-card {
+    background:    var(--color-surface);
+    border-radius: var(--radius-xl);
+    padding:       var(--space-4) var(--space-6);
+    display:       flex;
+    align-items:   center;
+    gap:           var(--space-4);
+    margin-bottom: var(--space-3);
+    box-shadow:    var(--shadow-card);
+}
+
+
+/* ─────────────────────────────────────────────
+   LOGO BLOCK
+   The small indigo square with the "L" letter.
+   flex-shrink:0 prevents it from squishing when
+   the window is narrow.
+───────────────────────────────────────────── */
+.header-logo {
+    width:           40px;
+    height:          40px;
+    background:      var(--color-primary);
+    border-radius:   var(--radius-lg);
+    display:         inline-flex;
+    align-items:     center;
+    justify-content: center;
+    color:           white;
+    font-weight:     500;
+    font-size:       var(--font-lg);
+    flex-shrink:     0;
+}
+
+
+/* ─────────────────────────────────────────────
+   APP NAME + SUBTITLE
+   Two lines stacked vertically inside the header.
+   display:block makes each span sit on its own line.
+───────────────────────────────────────────── */
+.header-app-name {
+    display:     block;
+    font-size:   var(--font-md);
+    font-weight: 500;
+    color:       var(--color-text);
+    line-height: 1.2;
+}
+
+.header-sub {
+    display:     block;
+    font-size:   var(--font-xs);
+    color:       var(--color-text-muted);
+    margin-top:  2px;
+}
+
+
+/* ─────────────────────────────────────────────
+   USER PILL
+   The avatar + first name pill on the right side.
+   margin-left:auto pushes it all the way to the
+   right edge of the header card.
+───────────────────────────────────────────── */
+.header-user-pill {
+    display:     inline-flex;
+    align-items: center;
+    gap:         var(--space-2);
+    background:  var(--color-surface-2);
+    padding:     var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+    border-radius: var(--radius-pill);
+    margin-left: auto;   /* pushes the pill to the far right */
+}
+
+.header-user-avatar {
+    width:           28px;
+    height:          28px;
+    border-radius:   var(--radius-pill);
+    background:      var(--color-warning);
+    color:           #5a4400;             /* dark text on yellow */
+    display:         inline-flex;
+    align-items:     center;
+    justify-content: center;
+    font-size:       var(--font-xs);
+    font-weight:     500;
+}
+
+.header-user-name {
+    font-size:   var(--font-sm);
+    font-weight: 500;
+    color:       var(--color-text);
+}

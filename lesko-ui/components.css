@@ -1,0 +1,215 @@
+/*
+ * lesko-ui / components.css  —  Layer 3: Reusable Components
+ *
+ * These are the building blocks of the UI. Each "component" is a
+ * named CSS class (or group of classes) that you apply to HTML elements.
+ *
+ * HOW TO USE:
+ *   Instead of writing:  style="background:white; border-radius:20px; padding:20px 24px"
+ *   You write:           class="card"
+ *
+ * THE GOLDEN RULE:
+ *   No magic numbers. Every value here must be a var(--…) token.
+ *   If you need a new value that doesn't exist in tokens.css — add a
+ *   token there first, then use it here.
+ *
+ * IMPORTANT: Load this file AFTER tokens.css and base.css.
+ *
+ * TABLE OF CONTENTS:
+ *   1. Cards
+ *   2. Badges (ticket status)
+ *   3. Urgency pills
+ *   4. Avatars
+ *   5. Assign pills
+ *   6. Open button
+ */
+
+
+/* ═════════════════════════════════════════════
+   1. CARDS
+   A card is a white rounded box with a soft shadow.
+   It's the container for almost every section of
+   the app — KPI cards, the ticket list, the header.
+
+   Usage:   <div class="card"> ... </div>
+═════════════════════════════════════════════ */
+.card {
+    background:    var(--color-surface);
+    border-radius: var(--radius-xl);
+    padding:       var(--space-5) var(--space-6);
+    box-shadow:    var(--shadow-card);
+}
+
+
+/* ═════════════════════════════════════════════
+   2. BADGES — ticket status labels
+   A badge is a small coloured pill that shows
+   the current status of a ticket.
+
+   Every badge gets the base .badge class PLUS
+   one modifier class for its colour:
+
+   Usage:   <span class="badge badge-open">open</span>
+            <span class="badge badge-answered">answered</span>
+
+   BASE CLASS — sets the shape and text style.
+   MODIFIER CLASSES — set the colour per status.
+═════════════════════════════════════════════ */
+.badge {
+    display:       inline-block;
+    padding:       var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size:     var(--font-xs);
+    font-weight:   500;
+    white-space:   nowrap;           /* never wraps onto a second line */
+}
+
+/* Status colours — background is a light tint, text is a dark shade */
+.badge-open           { background: #e1edfb; color: #1d4e8c; }
+.badge-answered       { background: #d6f0d6; color: #1f6a1f; }
+.badge-closed         { background: #d6f0d6; color: #1f6a1f; }
+.badge-cancelled      { background: #fde0e0; color: #8a1f1f; }
+.badge-flagged        { background: #fdf3d4; color: #7a5f00; }
+.badge-not_a_question { background: #f0f0f0; color: #666666; }
+
+
+/* ═════════════════════════════════════════════
+   3. URGENCY PILLS
+   Similar shape to badges but used specifically
+   for the urgency level of a ticket (normal /
+   urgent / critical).
+
+   Usage:   <span class="urg-pill urg-normal">normal</span>
+            <span class="urg-pill urg-urgent">urgent</span>
+            <span class="urg-pill urg-critical">critical</span>
+═════════════════════════════════════════════ */
+.urg-pill {
+    display:       inline-block;
+    padding:       var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size:     var(--font-xs);
+    font-weight:   500;
+    white-space:   nowrap;
+}
+
+.urg-normal   { background: #e6f4e6; color: #1f6a1f; }
+.urg-urgent   { background: #fdf3d4; color: #7a5f00; }
+.urg-critical { background: #fde0e0; color: #8a1f1f; }
+
+
+/* ═════════════════════════════════════════════
+   4. AVATARS
+   A small coloured circle (or rounded square) that
+   shows a person's initials. Used for team members
+   and coaches throughout the app.
+
+   Every avatar gets .avatar PLUS a colour modifier:
+
+   Usage:   <span class="avatar avatar-indigo">ML</span>
+            <span class="avatar avatar-green">AB</span>
+
+   The colour variants map to our brand palette.
+   Yellow gets dark text because yellow is too light
+   for white text to be readable.
+═════════════════════════════════════════════ */
+.avatar {
+    width:           28px;
+    height:          28px;
+    border-radius:   var(--radius-pill);   /* fully round */
+    display:         inline-flex;
+    align-items:     center;
+    justify-content: center;
+    font-size:       var(--font-xs);
+    font-weight:     500;
+    flex-shrink:     0;                    /* never squishes in a flex row */
+}
+
+.avatar-indigo { background: var(--color-indigo); color: white; }
+.avatar-green  { background: var(--color-green);  color: white; }
+.avatar-blue   { background: var(--color-blue);   color: white; }
+.avatar-red    { background: var(--color-red);     color: white; }
+.avatar-yellow { background: var(--color-yellow);  color: #5a4400; } /* dark text on yellow */
+
+/* Square variant — same colours but with a rounded-square shape instead of circle */
+.avatar-sq {
+    border-radius: var(--radius-sm);
+}
+
+
+/* ═════════════════════════════════════════════
+   5. ASSIGN PILLS
+   Shows which coach a ticket is assigned to.
+   Two states: assigned (coloured) or empty (dashed outline).
+
+   Usage:   <span class="assign-pill">ML</span>
+            <span class="assign-empty">unassigned</span>
+═════════════════════════════════════════════ */
+.assign-pill {
+    display:       inline-block;
+    padding:       var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size:     var(--font-xs);
+    font-weight:   500;
+    background:    #eef0f9;
+    color:         var(--color-primary);
+    white-space:   nowrap;
+}
+
+.assign-empty {
+    display:       inline-block;
+    padding:       var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size:     var(--font-xs);
+    font-weight:   500;
+    background:    var(--color-surface);
+    color:         var(--color-text-muted);
+    border:        1px dashed #c4c8d4;
+    white-space:   nowrap;
+}
+
+
+/* ═════════════════════════════════════════════
+   7. PROMPT BLOCK
+   Used to display prompt/code text in a readable
+   pre-formatted block. Replaces st.code() which
+   renders Streamlit's internal toolbar/labels.
+
+   Usage:  <pre class="prompt-block">{text}</pre>
+═════════════════════════════════════════════ */
+.prompt-block {
+    background:    var(--color-surface-2);
+    border:        1px solid var(--color-bg);
+    border-radius: var(--radius-md);
+    padding:       var(--space-4);
+    font-family:   "Courier New", Courier, monospace;
+    font-size:     var(--font-sm);
+    color:         var(--color-text);
+    line-height:   1.6;
+    white-space:   pre-wrap;
+    word-break:    break-word;
+    margin:        0;
+    max-height:    320px;
+    overflow-y:    auto;
+}
+
+
+/* ═════════════════════════════════════════════
+   6. OPEN BUTTON
+   The small circular arrow button at the far right
+   of each ticket row. Clicking it opens the ticket.
+
+   Usage:   <div class="open-btn">›</div>
+═════════════════════════════════════════════ */
+.open-btn {
+    width:           24px;
+    height:          24px;
+    border-radius:   var(--radius-pill);
+    background:      var(--color-primary);
+    color:           white;
+    display:         inline-flex;
+    align-items:     center;
+    justify-content: center;
+    font-size:       var(--font-xs);
+    cursor:          pointer;
+    flex-shrink:     0;
+}

@@ -1,13 +1,33 @@
 import os
+import sys
+import types
 import datetime
 import concurrent.futures
 import streamlit as st
 import bq_client
 import config
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lesko-ui"))
+import ui_theme
+
+# ── Local dev mode ─────────────────────────────────────────────────────────────
+# Set DEV_USER=your@email.com in your shell to bypass OAuth when running locally.
+# Example:  export DEV_USER=martin.j.menke@gmail.com
+# Leave unset (or empty) in production — Cloud Run never has this var.
+_DEV_USER = os.environ.get("DEV_USER", "").strip()
+if _DEV_USER:
+    _mock = types.SimpleNamespace(
+        is_logged_in=True,
+        email=_DEV_USER,
+        name=_DEV_USER.split("@")[0].replace(".", " ").title(),
+    )
+    if not hasattr(st, "_original_user"):
+        st._original_user = getattr(st, "user", None)
+    st.user = _mock
+
 st.set_page_config(page_title=config.APP_NAME, layout="wide", page_icon="🎯")
 
-# ── Brand palette ──────────────────────────────────────────────────────────────
+# ── Brand palette (kept for login screen and urg dot colors) ──────────────────
 INDIGO  = "#4a52a3"
 YELLOW  = "#f5c520"
 GREEN   = "#2e9b2e"
@@ -17,454 +37,23 @@ BG      = "#e8eef6"
 CARD_BG = "#ffffff"
 ROW_BG  = "#f7f9fc"
 
-st.markdown(f"""
-<style>
-/* ── Global font ── */
-html, body, .stApp, .stApp * {{
-    font-family: "Inter", "Helvetica Neue", Arial, sans-serif !important;
-    font-size: 14px;
-}}
+_STATIC = os.path.join(os.path.dirname(__file__), "static")
+ui_theme.inject()
+ui_theme.inject_file(os.path.join(_STATIC, "sidebar.css"))
+ui_theme.inject_file(os.path.join(_STATIC, "header.css"))
+ui_theme.inject_file(os.path.join(_STATIC, "kpi.css"))
+ui_theme.inject_file(os.path.join(_STATIC, "tickets.css"))
+ui_theme.inject_file(os.path.join(_STATIC, "inbox.css"))
 
-/* ── Global background ── */
-.stApp {{
-    background-color: {BG} !important;
-}}
-section[data-testid="stMain"] > div {{
-    background-color: {BG} !important;
-}}
-.main .block-container {{
-    padding-top: 1rem !important;
-    padding-bottom: 2rem !important;
-}}
-
-/* ── Sidebar (filter panel) ── */
-[data-testid="stSidebar"] {{
-    background-color: {CARD_BG} !important;
-    border-right: 1px solid #e8eef6 !important;
-}}
-[data-testid="stSidebar"] * {{
-    color: #111827 !important;
-}}
-[data-testid="stSidebar"] .stSelectbox label,
-[data-testid="stSidebar"] .stTextInput label,
-[data-testid="stSidebar"] .stRadio label,
-[data-testid="stSidebar"] .stPills label {{
-    color: #6b7280 !important;
-    font-size: 0.68rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 500;
-}}
-[data-testid="stSidebar"] h1,
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {{
-    color: #111827 !important;
-}}
-[data-testid="stSidebar"] hr {{
-    border-color: #e8eef6 !important;
-}}
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {{
-    color: #6b7280 !important;
-}}
-/* sidebar input field backgrounds */
-[data-testid="stSidebar"] [data-baseweb="select"] > div,
-[data-testid="stSidebar"] [data-baseweb="input"] > div {{
-    background-color: #f5f7fb !important;
-    border-radius: 12px !important;
-    border: none !important;
-}}
-
-/* ── Tabs ── */
-button[data-baseweb="tab"] {{
-    font-weight: 500 !important;
-    color: #6b7280 !important;
-    border-radius: 14px !important;
-    padding: 8px 18px !important;
-    transition: all 0.15s;
-    font-size: 0.85rem !important;
-}}
-button[data-baseweb="tab"][aria-selected="true"] {{
-    background-color: {INDIGO} !important;
-    color: #ffffff !important;
-    border-bottom: none !important;
-}}
-[data-baseweb="tab-highlight"] {{ display: none !important; }}
-[data-baseweb="tab-border"] {{ display: none !important; }}
-[data-baseweb="tab-list"] {{
-    background: {CARD_BG} !important;
-    border-radius: 20px !important;
-    padding: 6px !important;
-    gap: 2px !important;
-    margin-bottom: 12px !important;
-}}
-
-/* ── Header card ── */
-.lesko-header-card {{
-    background: {CARD_BG};
-    border-radius: 20px;
-    padding: 16px 22px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    margin-bottom: 12px;
-}}
-.header-logo {{
-    width: 40px; height: 40px;
-    background: {INDIGO};
-    border-radius: 14px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: 500;
-    font-size: 1.1rem;
-    flex-shrink: 0;
-}}
-.header-app-name {{
-    font-size: 1rem;
-    font-weight: 500;
-    color: #111827;
-    display: block;
-    line-height: 1.2;
-}}
-.header-sub {{
-    font-size: 0.7rem;
-    color: #6b7280;
-    display: block;
-    margin-top: 2px;
-}}
-.header-user-pill {{
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: #f5f7fb;
-    padding: 5px 12px 5px 5px;
-    border-radius: 999px;
-    margin-left: auto;
-}}
-.header-user-avatar {{
-    width: 28px; height: 28px;
-    border-radius: 50%;
-    background: {YELLOW};
-    color: #5a4400;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.68rem;
-    font-weight: 500;
-}}
-.header-user-name {{
-    font-size: 0.82rem;
-    font-weight: 500;
-    color: #111827;
-}}
-
-/* ── KPI Row A cards (icon top-left, label top-right, value bottom) ── */
-.kpi-card {{
-    background: {CARD_BG};
-    border-radius: 18px;
-    padding: 20px 22px;
-    min-height: 110px;
-    margin-bottom: 4px;
-}}
-.kpi-card-top {{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 14px;
-}}
-.kpi-icon {{
-    width: 38px; height: 38px;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 1rem;
-    font-weight: 500;
-    flex-shrink: 0;
-}}
-.kpi-label {{
-    font-size: 0.82rem;
-    color: #6b7280;
-    font-weight: 500;
-}}
-.kpi-value {{
-    font-size: 2.4rem;
-    font-weight: 600;
-    color: #111827;
-    line-height: 1;
-}}
-
-/* ── KPI Row B plain cards ── */
-.kpi-b-card {{
-    background: {CARD_BG};
-    border-radius: 18px;
-    padding: 20px 22px;
-    min-height: 100px;
-    margin-bottom: 4px;
-}}
-.kpi-b-label {{
-    font-size: 0.82rem;
-    color: #6b7280;
-    font-weight: 500;
-    margin-bottom: 6px;
-}}
-.kpi-b-value {{
-    font-size: 2rem;
-    font-weight: 600;
-    color: #111827;
-    line-height: 1;
-}}
-
-/* ── KPI Goal card ── */
-.kpi-goal-card {{
-    background: {INDIGO};
-    border-radius: 18px;
-    padding: 20px 22px;
-    min-height: 100px;
-    margin-bottom: 4px;
-}}
-.kpi-goal-label {{
-    font-size: 0.82rem;
-    color: #c4c8e6;
-    font-weight: 500;
-    margin-bottom: 8px;
-}}
-.kpi-goal-row {{
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
-    margin-bottom: 10px;
-}}
-.kpi-goal-value {{
-    font-size: 2rem;
-    font-weight: 600;
-    color: white;
-    line-height: 1;
-}}
-.kpi-goal-total {{
-    font-size: 0.75rem;
-    color: #c4c8e6;
-}}
-.kpi-goal-bar-bg {{
-    background: rgba(255,255,255,0.25);
-    border-radius: 999px;
-    height: 4px;
-    overflow: hidden;
-}}
-.kpi-goal-bar-fill {{
-    background: {YELLOW};
-    border-radius: 999px;
-    height: 4px;
-}}
-
-/* ── Section card (tickets list) ── */
-.section-card {{
-    background: {CARD_BG};
-    border-radius: 20px;
-    padding: 18px 18px 10px;
-    margin-top: 14px;
-}}
-.section-card-title {{
-    font-size: 1rem;
-    font-weight: 500;
-    color: #111827;
-    margin-bottom: 14px;
-}}
-.section-card-count {{
-    color: #6b7280;
-    font-weight: 400;
-}}
-
-/* ── Member initials avatar ── */
-.mem-avatar {{
-    width: 24px; height: 24px;
-    border-radius: 8px;
-    background: {INDIGO};
-    color: white;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.6rem;
-    font-weight: 500;
-    flex-shrink: 0;
-}}
-.mem-avatar-green  {{ background: {GREEN};   color: white; }}
-.mem-avatar-blue   {{ background: {BLUE};    color: white; }}
-.mem-avatar-red    {{ background: {RED};     color: white; }}
-.mem-avatar-yellow {{ background: {YELLOW};  color: #5a4400; }}
-
-/* ── Domain icon circle ── */
-.domain-circle {{
-    width: 26px; height: 26px;
-    border-radius: 50%;
-    background: {GREEN};
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.8rem;
-    flex-shrink: 0;
-}}
-
-/* ── Status badges (exact mockup colors) ── */
-.badge {{
-    display: inline-block;
-    padding: 4px 8px;
-    border-radius: 999px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    white-space: nowrap;
-}}
-.badge-open           {{ background: #e1edfb; color: #1d4e8c; }}
-.badge-answered       {{ background: #d6f0d6; color: #1f6a1f; }}
-.badge-closed         {{ background: #d6f0d6; color: #1f6a1f; }}
-.badge-cancelled      {{ background: #fde0e0; color: #8a1f1f; }}
-.badge-not_a_question {{ background: #f0f0f0; color: #666;     }}
-
-/* ── Urgency pills (exact mockup colors) ── */
-.urg-pill {{ display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 0.875rem; font-weight: 500; white-space: nowrap; }}
-.urg-normal   {{ background: #e6f4e6; color: #1f6a1f; }}
-.urg-urgent   {{ background: #fdf3d4; color: #7a5f00; }}
-.urg-critical {{ background: #fde0e0; color: #8a1f1f; }}
-
-/* ── Assign pill ── */
-.assign-pill {{
-    display: inline-block;
-    padding: 4px 8px;
-    border-radius: 999px;
-    font-size: 0.68rem;
-    font-weight: 500;
-    background: #eef0f9;
-    color: {INDIGO};
-    white-space: nowrap;
-}}
-.assign-empty {{
-    display: inline-block;
-    padding: 4px 8px;
-    border-radius: 999px;
-    font-size: 0.68rem;
-    font-weight: 500;
-    background: white;
-    color: #6b7280;
-    border: 1px dashed #c4c8d4;
-    white-space: nowrap;
-}}
-
-/* ── Open ticket button ── */
-.open-btn {{
-    width: 24px; height: 24px;
-    border-radius: 50%;
-    background: {INDIGO};
-    color: white;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.7rem;
-    cursor: pointer;
-}}
-
-/* ── Table column headers ── */
-.tbl-header {{
-    font-size: 0.62rem;
-    font-weight: 500;
-    color: #6b7280;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding-bottom: 8px;
-}}
-
-/* ── Buttons ── */
-button[data-testid="baseButton-primary"] {{
-    background-color: #7b82c9 !important;
-    color: #ffffff !important;
-    border: none !important;
-    border-radius: 999px !important;
-    font-weight: 500 !important;
-}}
-button[data-testid="baseButton-primary"]:hover {{
-    background-color: {INDIGO} !important;
-}}
-button[data-testid="baseButton-secondary"] {{
-    background-color: #eef0fb !important;
-    color: {INDIGO} !important;
-    border: none !important;
-    border-radius: 999px !important;
-    font-weight: 500 !important;
-}}
-button[data-testid="baseButton-secondary"]:hover {{
-    background-color: #dde0f5 !important;
-}}
-
-/* ── Sidebar filter container frame ── */
-.sidebar-filter-frame {{
-    background: #f5f7fb;
-    border-radius: 16px;
-    padding: 12px 14px 6px;
-    margin-bottom: 10px;
-}}
-
-/* ── Metric cards (reports tab) ── */
-[data-testid="metric-container"] {{
-    background: {CARD_BG};
-    border-left: 4px solid {INDIGO};
-    border-radius: 10px;
-    padding: 10px 14px !important;
-}}
-[data-testid="metric-container"] label {{
-    color: #6b7280 !important;
-    font-size: 0.8rem !important;
-}}
-[data-testid="metric-container"] [data-testid="stMetricValue"] {{
-    color: #111827 !important;
-    font-weight: 500;
-}}
-
-/* ── Table header row ── */
-.tbl-header {{
-    font-size: 0.72rem;
-    font-weight: 700;
-    color: #999;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 0 4px 8px;
-    border-bottom: 1px solid #e8eef6;
-    margin-bottom: 6px;
-}}
-
-/* ── Dividers ── */
-hr {{ border-color: #e0e6f0 !important; }}
-
-/* ── Ticket preview tooltip ── */
-.tip-wrap {{
-    position: relative;
-    display: inline-block;
-    max-width: 100%;
-}}
-.tip-wrap .tip-box {{
-    display: none;
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 9999;
-    background: #1a1a2e;
-    color: #f0f2f8;
-    font-size: 0.82rem;
-    line-height: 1.55;
-    padding: 10px 14px;
-    border-radius: 10px;
-    width: 420px;
-    max-width: 90vw;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
-    white-space: pre-wrap;
-    word-break: break-word;
-    pointer-events: none;
-}}
-.tip-wrap:hover .tip-box {{
-    display: block;
-}}
-</style>
-""", unsafe_allow_html=True)
+# ── CSS is now loaded via ui_theme above ──────────────────────────────────────
+# lesko-ui/tokens.css      → design tokens (colors, spacing, type, radius)
+# lesko-ui/base.css        → global font + reset
+# lesko-ui/components.css  → .card, .badge, .urg-pill, .avatar …
+# lesko-ui/streamlit.css   → Streamlit widget overrides
+# static/sidebar.css       → Zone 1: sidebar filter panel
+# static/header.css        → Zone 2+3: header + tabs
+# static/kpi.css           → Zone 4: KPI cards
+# static/tickets.css       → Zone 5+6: ticket table + rows
 
 # ── Domain icons ───────────────────────────────────────────────────────────────
 DOMAIN_ICON = {
@@ -508,63 +97,57 @@ def _avatar_class(name: str) -> str:
     colors = ["mem-avatar-green", "mem-avatar-blue", "mem-avatar-red", "mem-avatar-yellow", ""]
     return colors[hash(name or "") % len(colors)]
 
-def kpi_card(label: str, value, icon_color: str) -> str:
-    """KPI Row A — colored dot + label top, big value bottom."""
-    return f"""
-    <div class="kpi-card">
-      <div class="kpi-card-top">
-        <div style="display:flex;align-items:center;gap:7px;">
-          <div style="width:10px;height:10px;border-radius:50%;background:{icon_color};flex-shrink:0;"></div>
-          <div class="kpi-label">{label}</div>
-        </div>
-      </div>
-      <div class="kpi-value">{value:,}</div>
-    </div>"""
+def mn_mention(member_id, member_name: str) -> str:
+    """Return the HTML snippet MN uses for a @mention tag."""
+    url = f"https://lesko-help-2.mn.co/members/{member_id}"
+    return (
+        f'<p dir="auto"><a class="mighty-mention navigate" '
+        f'data-user-id="{member_id}" href="{url}">{member_name}</a></p>'
+    )
 
-def kpi_b_card(label: str, value) -> str:
-    """KPI Row B — plain label + value."""
-    return f"""
-    <div class="kpi-b-card">
-      <div class="kpi-b-label">{label}</div>
-      <div class="kpi-b-value">{value}</div>
-    </div>"""
+def build_mn_body(text: str, tag_member: bool, member_id, member_name: str) -> str:
+    """Wrap plain text in HTML and prepend a @mention if requested."""
+    safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if tag_member and member_id:
+        return mn_mention(member_id, member_name) + f'<p dir="auto">{safe}</p>'
+    return text  # plain text also accepted by MN API
 
-def goal_card(answered: int, goal: int) -> str:
-    pct = min(100, round(answered / goal * 100)) if goal > 0 else 0
+
+_KPI_COLORS = {
+    # variant: (light_bg, light_fg, dark_bg, dark_fg)
+    "open":     ("#e1edfb", "#1d4e8c", "#1a2f4a", "#7db8f7"),
+    "normal":   ("#e6f4e6", "#1f6a1f", "#1a3a1a", "#6dbd6d"),
+    "urgent":   ("#fdf3d4", "#7a5f00", "#3a2d10", "#f0c060"),
+    "critical": ("#fde0e0", "#8a1f1f", "#3a1a1a", "#f77d7d"),
+}
+
+def kpi_card(label: str, value, variant: str = "") -> str:
+    formatted = f"{value:,}" if isinstance(value, int) else str(value)
+    if variant and variant in _KPI_COLORS:
+        dark = st.session_state.get("dark_mode", False)
+        light_bg, light_fg, dark_bg, dark_fg = _KPI_COLORS[variant]
+        bg    = dark_bg  if dark else light_bg
+        color = dark_fg  if dark else light_fg
+        card_style  = f' style="background:{bg}"'
+        value_style = f' style="color:{color}"'
+    else:
+        card_style  = ""
+        value_style = ""
     return f"""
-    <div class="kpi-goal-card">
-      <div class="kpi-goal-label">Goal progress</div>
-      <div class="kpi-goal-row">
-        <div class="kpi-goal-value">{answered}</div>
-        <div class="kpi-goal-total">/ {goal}</div>
-      </div>
-      <div class="kpi-goal-bar-bg">
-        <div class="kpi-goal-bar-fill" style="width:{pct}%"></div>
-      </div>
+    <div class="kpi-card"{card_style}>
+      <div class="kpi-label">{label}</div>
+      <div class="kpi-value"{value_style}>{formatted}</div>
     </div>"""
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
 if not st.user.is_logged_in:
-    st.markdown(f"""
-    <div style="
-        display:flex; flex-direction:column; align-items:center;
-        justify-content:center; min-height:70vh; gap:12px;
-    ">
-      <div style="
-          background:{CARD_BG}; border-radius:24px;
-          padding:44px 56px; text-align:center; max-width:420px;
-          box-shadow:0 4px 24px rgba(74,82,163,0.13);
-      ">
-        <div style="
-            width:64px; height:64px; border-radius:16px; background:{INDIGO};
-            display:inline-flex; align-items:center; justify-content:center;
-            font-size:2rem; color:white; font-weight:800; margin-bottom:16px;
-        ">L</div>
-        <h2 style="margin:0 0 6px; color:#1a1a2e; font-size:1.5rem;">Lesko Help Desk</h2>
-        <p style="color:#999; font-size:0.9rem; margin:0 0 28px;">
-          Grant support queue — team access only
-        </p>
+    st.markdown("""
+    <div class="login-page">
+      <div class="login-card">
+        <div class="login-logo">L</div>
+        <h2 class="login-title">Lesko Help Desk</h2>
+        <p class="login-sub">Grant support queue — team access only</p>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -659,16 +242,61 @@ if "_status_overrides" not in st.session_state:
     # {content_id: new_status} — local patches applied after a quick-status change
     # so we don't have to nuke the full cache and re-query BQ on every dropdown click
     st.session_state._status_overrides = {}
-if "_open_ticket" not in st.session_state:
-    # Set by render_ticket_table fragment → picked up outside the fragment to open dialog
-    # (dialogs can't be called from inside @st.fragment)
-    st.session_state._open_ticket = None       # content_id
-if "_open_ticket_thread" not in st.session_state:
-    st.session_state._open_ticket_thread = None  # thread_id hint for parallel prefetch
 if "_open_group" not in st.session_state:
     st.session_state._open_group = None  # (thread_id, member_id, member_name)
 if "_ticket_page" not in st.session_state:
     st.session_state._ticket_page = 0
+if "show_filters" not in st.session_state:
+    st.session_state.show_filters = True
+if "show_kpis" not in st.session_state:
+    st.session_state.show_kpis = True
+if "_pending_action" not in st.session_state:
+    st.session_state._pending_action = None  # {"action", "content_id", "row"}
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+
+# ── Dark mode override (manual toggle — OS preference handled via @media in CSS)
+if st.session_state.dark_mode:
+    ui_theme.inject_dark_override()
+    # Streamlit uses Emotion CSS-in-JS for selected pill state — no stable
+    # attribute to target with CSS. Inject JS to watch and restyle selected pills.
+    import streamlit.components.v1 as _components
+    _components.html("""
+    <script>
+    (function() {
+        function applyPillStyles() {
+            var sidebar = window.parent.document.querySelector('[data-testid="stSidebar"]');
+            if (!sidebar) return;
+            var groups = sidebar.querySelectorAll('[data-testid="stButtonGroup"], [data-testid="stButtonGroupContainer"]');
+            groups.forEach(function(group) {
+                var buttons = group.querySelectorAll('button');
+                buttons.forEach(function(btn) {
+                    var bg = window.parent.getComputedStyle(btn).backgroundColor;
+                    // If background is NOT our brown (#4a4540 = rgb(74,69,64)), it's selected
+                    var isBrown = (bg === 'rgb(74, 69, 64)');
+                    if (!isBrown) {
+                        btn.style.setProperty('background-color', '#ffffff', 'important');
+                        btn.style.setProperty('border-color', '#ffffff', 'important');
+                        btn.style.setProperty('color', '#1c1c1e', 'important');
+                    }
+                });
+            });
+        }
+        applyPillStyles();
+        var obs = new MutationObserver(applyPillStyles);
+        obs.observe(window.parent.document.body, {childList: true, subtree: true, attributes: true});
+    })();
+    </script>
+    """, height=0)
+
+# ── Sidebar visibility ────────────────────────────────────────────────────────
+if not st.session_state.show_filters:
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"]                { display: none !important; }
+    [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
 # ── Sidebar (user account + filters) ──────────────────────────────────────────
 with st.sidebar:
@@ -681,8 +309,8 @@ with st.sidebar:
     <div style="display:flex; align-items:center; gap:10px; padding:4px 0 12px;">
       <div class="mem-avatar {_avatar_class(name)}">{_initials(name)}</div>
       <div>
-        <div style="font-weight:700; font-size:0.9rem; color:#1a1a2e;">{name}</div>
-        <div style="font-size:0.72rem; color:#999;">{email}</div>
+        <div class="sidebar-user-name">{name}</div>
+        <div class="sidebar-user-email">{email}</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -693,11 +321,22 @@ with st.sidebar:
     st.divider()
 
     # ── Filters ───────────────────────────────────────────────────────────────
-    st.markdown('<p style="font-size:0.72rem;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Filters</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sidebar-section-label">Filters</p>', unsafe_allow_html=True)
 
     today = datetime.date.today()
 
-    # 1. Status
+    # 1. Grant Coach
+    @st.cache_data(ttl=300)
+    def load_team_members():
+        return bq_client.get_team_members()
+
+    team_members = load_team_members()
+    filter_assignee = st.selectbox(
+        "Grant Coach",
+        ["All"] + team_members,
+    )
+
+    # 2. Status
     _status_opts = ["All"] + config.TICKET_STATUSES
     filter_status = st.selectbox(
         "Status",
@@ -706,13 +345,19 @@ with st.sidebar:
         format_func=lambda s: s if s == "All" else s.replace("_", " ").title(),
     )
 
-    # 2. Date range
-    date_range_option = st.radio(
+    # 3. Domain
+    filter_domain = st.selectbox(
+        "Domain",
+        ["All"] + config.DOMAINS,
+    )
+
+    # 4. Date range
+    date_range_option = st.pills(
         "Date Range",
         ["All", "Today", "This Week", "This Month", "Custom"],
-        horizontal=True,
+        default="All",
     )
-    if date_range_option == "All":
+    if date_range_option == "All" or date_range_option is None:
         date_from, date_to = None, None
     elif date_range_option == "Today":
         date_from, date_to = today, today
@@ -732,41 +377,33 @@ with st.sidebar:
         else:
             date_from = date_to = custom_range
 
-    # 3. Assigned To
-    @st.cache_data(ttl=300)
-    def load_team_members():
-        return bq_client.get_team_members()
-
-    team_members = load_team_members()
-    filter_assignee = st.selectbox(
-        "Grant Coach",
-        ["All"] + team_members,
-    )
-
-    # 4. Member ID
-    filter_member_id = st.text_input(
-        "Member ID",
-        value=st.session_state.member_id_filter,
-    )
-
-    # 5. Urgency (pill buttons)
+    # 5. Urgency
     filter_urgency = st.pills(
         "Urgency",
         options=["All", "Normal", "Urgent", "Critical"],
         default="All",
     )
 
-    # 6. Domain
-    filter_domain = st.selectbox(
-        "Domain",
-        ["All"] + config.DOMAINS,
+    # 6. Member ID
+    filter_member_id = st.text_input(
+        "Member ID",
+        value=st.session_state.member_id_filter,
     )
 
     st.divider()
-    if st.button("↺  Refresh", use_container_width=True, type="primary"):
-        st.cache_data.clear()
+    if st.button("↺  Refresh data", use_container_width=True, type="primary"):
+        load_tickets.clear()
+        load_open_stats.clear()
+        load_daily_stats.clear()
         st.session_state._status_overrides = {}
         st.session_state._ticket_page = 0
+        st.rerun()
+    _dm_label = "☀️  Light mode" if st.session_state.dark_mode else "🌙  Dark mode"
+    if st.button(_dm_label, use_container_width=True):
+        st.session_state.dark_mode = not st.session_state.dark_mode
+        st.rerun()
+    if st.button("◀  Hide filters", use_container_width=True):
+        st.session_state.show_filters = False
         st.rerun()
 
 
@@ -810,12 +447,12 @@ def _cached_thread(thread_id: str):
 
 @st.dialog("Ticket Detail", width="large")
 def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
-    # Fire ticket detail + thread in parallel — thread_id_hint comes from the
-    # already-loaded row so we don't have to wait for ticket detail to finish first.
-    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-    _fut_ticket = _executor.submit(_cached_ticket_detail, content_id)
+    # Fetch ticket detail on the main thread — @st.cache_data is unreliable when
+    # called from a ThreadPoolExecutor and may return stale results.
+    # The thread fetch can still run in parallel since it uses a separate cache key.
+    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     _fut_thread = _executor.submit(_cached_thread, thread_id_hint) if thread_id_hint else None
-    ticket = _fut_ticket.result()
+    ticket = _cached_ticket_detail(content_id)
 
     if not ticket:
         _executor.shutdown(wait=False)
@@ -840,20 +477,20 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
     _posted     = str(ticket.get("created_at", "—"))[:16]
 
     st.markdown(f"""
-<div style="margin:-1rem -1rem 0 -1rem;padding:16px 20px 14px;background:#f7f9fc;border-bottom:1px solid #e8eef6;">
-  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-    <span style="font-size:1.1rem;font-weight:700;color:#1a1a2e">{ticket.get('member_name','Unknown')}</span>
+<div class="ticket-dialog-header">
+  <div class="ticket-dialog-badge-row">
+    <span class="ticket-dialog-name">{ticket.get('member_name','Unknown')}</span>
     <span class="badge badge-{_status}">{_status.replace('_',' ').capitalize()}</span>
-    <span style="background:{_urg_bg};color:{_urg_fg};padding:3px 9px;border-radius:999px;font-size:0.68rem;font-weight:500">{_urg.capitalize()}</span>
-    <span style="font-size:0.78rem;color:#6b7280">{content_type}</span>
-    {f'<span style="font-size:0.78rem;color:#6b7280">{_domain_str}</span>' if _domain_str else ""}
-    {f'<a href="{_permalink}" target="_blank" style="margin-left:auto;font-size:0.75rem;color:{INDIGO};text-decoration:none">↗ MN Profile</a>' if _permalink else ""}
+    <span class="urg-pill urg-{_urg}">{_urg.capitalize()}</span>
+    <span class="ticket-meta-item">{content_type}</span>
+    {f'<span class="ticket-meta-item">{_domain_str}</span>' if _domain_str else ""}
+    {f'<a href="{_permalink}" target="_blank" class="ticket-meta-link">↗ MN Profile</a>' if _permalink else ""}
   </div>
-  <div style="display:flex;gap:24px;flex-wrap:wrap">
-    <span style="font-size:0.75rem;color:#6b7280"><span style="font-weight:600;color:#374151">State</span>&nbsp; {_state}</span>
-    <span style="font-size:0.75rem;color:#6b7280"><span style="font-weight:600;color:#374151">City</span>&nbsp; {_city}</span>
-    <span style="font-size:0.75rem;color:#6b7280"><span style="font-weight:600;color:#374151">Member ID</span>&nbsp; {_mid}</span>
-    <span style="font-size:0.75rem;color:#6b7280"><span style="font-weight:600;color:#374151">Posted</span>&nbsp; {_posted}</span>
+  <div class="ticket-meta-row">
+    <span class="ticket-meta-item"><span class="ticket-meta-key">State</span>&nbsp; {_state}</span>
+    <span class="ticket-meta-item"><span class="ticket-meta-key">City</span>&nbsp; {_city}</span>
+    <span class="ticket-meta-item"><span class="ticket-meta-key">Member ID</span>&nbsp; {_mid}</span>
+    <span class="ticket-meta-item"><span class="ticket-meta-key">Posted</span>&nbsp; {_posted}</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -871,14 +508,14 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
             is_ticket = r["content_id"] == content_id
             st.markdown("**Original Post**")
             st.markdown(f"""
-<div style="background:#f0f4ff;border-left:4px solid {INDIGO};border-radius:12px;padding:14px 16px;margin-bottom:16px">
-  <div style="font-weight:700;font-size:0.95rem;color:#1a1a2e;margin-bottom:2px">
+<div class="post-card">
+  <div class="post-card-author">
     {r['author_name']}
-    {"&nbsp;<span style='font-size:0.72rem;background:#4a52a3;color:white;padding:2px 7px;border-radius:999px'>this ticket</span>" if is_ticket else ""}
+    {"&nbsp;<span class='this-ticket-badge'>this ticket</span>" if is_ticket else ""}
   </div>
-  <div style="font-size:0.72rem;color:#6b7280;margin-bottom:10px">{str(r['created_at'])[:16]}</div>
-  <div style="font-size:0.9rem;color:#111827;line-height:1.55">{r['body'] or '<em>empty</em>'}</div>
-  {"<div style='margin-top:8px'><a href='" + r['permalink'] + "' target='_blank' style='font-size:0.75rem;color:#4a52a3'>↗ View on Mighty Networks</a></div>" if r.get('permalink') else ""}
+  <div class="post-card-date">{str(r['created_at'])[:16]}</div>
+  <div class="post-card-body">{r['body'] or '<em>empty</em>'}</div>
+  {"<div style='margin-top:8px'><a href='" + r['permalink'] + "' target='_blank' class='ticket-meta-link'>↗ View on Mighty Networks</a></div>" if r.get('permalink') else ""}
 </div>
 """, unsafe_allow_html=True)
 
@@ -903,105 +540,32 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
 
     st.divider()
 
-    # Editable fields
-    st.markdown("**Update Ticket**")
-    can_edit = ticket.get("ticket_status") != "closed"
-
-    c1, c2 = st.columns(2)
-    with c1:
-        all_statuses   = config.TICKET_STATUSES + config.FEEDBACK_STATUSES
-        current_status = ticket.get("manual_status") or ticket.get("ticket_status") or "new"
-        if current_status not in all_statuses:
-            current_status = "new"
-        new_status = st.selectbox(
-            "Status",
-            all_statuses,
-            index=all_statuses.index(current_status),
-            disabled=not can_edit,
-            key=f"status_{content_id}",
-            format_func=lambda s: f"{STATUS_ICON.get(s, '')} {s.replace('_', ' ').title()}",
-        )
-    with c2:
-        assignee_options = ["— unassigned —"] + team_members
-        current_assignee = ticket.get("assigned_to") or "— unassigned —"
-        if current_assignee not in assignee_options:
-            current_assignee = "— unassigned —"
-        new_assignee = st.selectbox(
-            "Grant Coach",
-            assignee_options,
-            index=assignee_options.index(current_assignee),
-            key=f"assignee_{content_id}",
-        )
-
-    # Override checkbox — only shown when an assignee is selected
-    override_assignment = False
-    if new_assignee != "— unassigned —" and can_edit:
-        override_assignment = st.checkbox(
-            f"Set as permanent Grant Coach for **{ticket.get('member_name', 'this member')}**",
-            value=False,
-            help="Overrides the automatic assignment rule — all future tickets from this member will go to this Grant Coach.",
-            key=f"override_{content_id}",
-        )
-
-    # Reason field — only shown for feedback statuses
-    feedback_reason = None
-    if new_status in config.FEEDBACK_STATUSES:
-        feedback_reason = st.text_area(
-            "Reason",
-            value=ticket.get("feedback_reason") or "",
-            placeholder="Explain why this is / is not a question — this trains the AI classifier.",
-            key=f"reason_{content_id}",
-            height=80,
-        )
-
-    c3, c4 = st.columns(2)
-    with c3:
-        domain_options = ["— unset —"] + config.DOMAINS
-        current_domain = ticket.get("domain") or "— unset —"
-        if current_domain not in domain_options:
-            current_domain = "— unset —"
-        new_domain = st.selectbox(
-            "Domain",
-            domain_options,
-            index=domain_options.index(current_domain),
-            key=f"domain_{content_id}",
-        )
-
-    if can_edit:
-        if st.button("💾 Save changes", key=f"save_{content_id}"):
-            assignee_val = "" if new_assignee == "— unassigned —" else new_assignee
-            domain_val   = "" if new_domain   == "— unset —"      else new_domain
-            bq_client.update_ticket_meta(
-                content_id, new_status, assignee_val, domain_val,
-                feedback_reason=feedback_reason,
-            )
-            if override_assignment and assignee_val:
-                bq_client.set_member_assignment_override(
-                    ticket["member_id"], assignee_val, current_user
-                )
-            st.cache_data.clear()
-            st.session_state._status_overrides = {}
-            st.success("Saved." if not override_assignment else "Saved — permanent Grant Coach updated.")
-    else:
-        st.caption("⚠️ Ticket is closed — status locked.")
-
-    st.divider()
-
     # Answer entry — posts to Mighty Networks via API
     st.markdown("**Post an Answer to Mighty Networks**")
     _mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
     if not _mn_key:
         st.warning("No Mighty Networks API key set. Add yours in the ⚙️ Settings tab.")
     else:
-        _post_id = (ticket.get("thread_id") or content_id).replace("post_", "")
+        _post_id   = (ticket.get("thread_id") or content_id).replace("post_", "")
+        _mem_id    = ticket.get("member_id")
+        _mem_name  = ticket.get("member_name") or ""
+
+        _tag_col, _ans_col = st.columns([1, 3])
+        _tag_member = _tag_col.toggle(
+            f"Tag @{_mem_name.split()[0] if _mem_name else 'member'}",
+            value=True,
+            key=f"tag_{content_id}",
+            help="Prepends a @mention so the member gets a notification",
+        )
         answer_body = st.text_area(
             "Answer", key=f"answer_{content_id}",
-            label_visibility="collapsed", height=180,
+            label_visibility="collapsed", height=160,
         )
         if st.button("Post Answer to MN", key=f"post_answer_{content_id}", type="primary"):
             if answer_body.strip():
                 try:
-                    bq_client.post_mn_comment(_post_id, answer_body.strip(), _mn_key)
+                    _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name)
+                    bq_client.post_mn_comment(_post_id, _body, _mn_key)
                     st.session_state[f"answer_{content_id}"] = ""
                     st.cache_data.clear()
                     st.success("Answer posted to Mighty Networks.")
@@ -1009,34 +573,6 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
                     st.error(f"Failed to post: {e}")
             else:
                 st.warning("Answer cannot be empty.")
-
-    st.divider()
-
-    # Internal comment thread
-    st.markdown("**Internal Thread**")
-    comments = bq_client.get_comments(content_id)
-    if comments.empty:
-        st.caption("No internal comments yet.")
-    else:
-        for _, c in comments.iterrows():
-            with st.chat_message("assistant"):
-                st.markdown(f"**{c['author']}** · {str(c['created_at'])[:16]}")
-                st.markdown(c["body"])
-
-    st.markdown("**Add Internal Comment**")
-    if not current_user:
-        st.warning("Set the `LESKO_USER` env var to post comments.")
-    else:
-        comment_body = st.text_area(
-            "Comment", key=f"comment_{content_id}", label_visibility="collapsed", height=140,
-        )
-        if st.button("Post Comment", key=f"post_comment_{content_id}"):
-            if comment_body.strip():
-                bq_client.post_comment(content_id, current_user, comment_body.strip())
-                st.session_state[f"comment_{content_id}"] = ""
-                st.success("Comment posted.")
-            else:
-                st.warning("Comment cannot be empty.")
 
     st.divider()
 
@@ -1068,7 +604,12 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
         else:
             for _, h in history.iterrows():
                 h_icon = STATUS_ICON.get(h["ticket_status"], "⚪")
-                st.markdown(f"{h_icon} `{str(h['created_at'])[:10]}` — {h['body_preview']}")
+                h_link = f'&nbsp;<a href="{h["permalink"]}" target="_blank" style="font-size:0.75rem;color:#4a52a3">↗ MN</a>' if h.get("permalink") else ""
+                st.markdown(
+                    f'{h_icon} <span style="font-size:0.8rem;color:#6b7280">`{str(h["created_at"])[:10]}`</span>'
+                    f' — {h["body_preview"]}{h_link}',
+                    unsafe_allow_html=True,
+                )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1098,9 +639,9 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
 
     # ── Header ────────────────────────────────────────────────────────────────
     st.markdown(f"""
-<div style="margin:-1rem -1rem 0 -1rem;padding:14px 20px 12px;background:#f7f9fc;border-bottom:1px solid #e8eef6">
-  <span style="font-size:1.05rem;font-weight:700;color:#1a1a2e">{member_name}</span>
-  <span style="font-size:0.8rem;color:#6b7280;margin-left:10px">{len(open_tix)} open comment{"s" if len(open_tix) != 1 else ""} · {len(done_tix)} handled</span>
+<div class="ticket-dialog-header">
+  <span class="ticket-dialog-name">{member_name}</span>
+  <span class="ticket-meta-item" style="margin-left:10px">{len(open_tix)} open comment{"s" if len(open_tix) != 1 else ""} · {len(done_tix)} handled</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1170,21 +711,29 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
             urg = (t.get("urgency") or "normal").lower()
             urg_bg, urg_fg = _URG_COLORS.get(urg, _URG_COLORS["normal"])
             st.markdown(f"""
-<div style="background:#fff;border:1px solid #e8eef6;border-radius:12px;padding:12px 14px;margin-bottom:6px">
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+<div class="comment-card">
+  <div class="comment-card-meta">
     <span class="badge badge-open">open</span>
-    <span style="background:{urg_bg};color:{urg_fg};padding:2px 8px;border-radius:999px;font-size:0.68rem;font-weight:500">{urg.capitalize()}</span>
-    <span style="font-size:0.72rem;color:#9ca3af">{str(t['created_at'])[:16]}</span>
-    {f'<a href="{t["permalink"]}" target="_blank" style="margin-left:auto;font-size:0.72rem;color:{INDIGO};text-decoration:none">↗</a>' if t.get("permalink") else ""}
+    <span class="urg-pill urg-{urg}">{urg.capitalize()}</span>
+    <span class="comment-date">{str(t['created_at'])[:16]}</span>
+    {f'<a href="{t["permalink"]}" target="_blank" class="ticket-meta-link" style="margin-left:auto">↗</a>' if t.get("permalink") else ""}
   </div>
-  <div style="font-size:0.88rem;color:#111827;line-height:1.55">{t.get("body_preview") or "<em>(empty)</em>"}</div>
+  <div class="comment-body">{t.get("body_preview") or "<em>(empty)</em>"}</div>
 </div>""", unsafe_allow_html=True)
 
             with st.expander("Reply & settings for this comment"):
                 # ── Post answer to MN ──────────────────────────────────────
                 _mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
                 if _mn_key:
-                    _pid = thread_id.replace("post_", "")
+                    _pid      = thread_id.replace("post_", "")
+                    _g_mem_id = t.get("member_id") or group_tix.iloc[0].get("member_id")
+                    _gtc, _gac = st.columns([1, 3])
+                    _grp_tag = _gtc.toggle(
+                        f"Tag @{member_name.split()[0]}",
+                        value=True,
+                        key=f"grp_tag_{t['content_id']}",
+                        help="Prepends a @mention so the member gets a notification",
+                    )
                     ans = st.text_area(
                         "Post Answer to Mighty Networks",
                         key=f"grp_ans_{t['content_id']}",
@@ -1194,7 +743,8 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
                     if st.button("Post Answer to MN", key=f"grp_post_{t['content_id']}", type="primary"):
                         if ans.strip():
                             try:
-                                bq_client.post_mn_comment(_pid, ans.strip(), _mn_key)
+                                _gbody = build_mn_body(ans.strip(), _grp_tag, _g_mem_id, member_name)
+                                bq_client.post_mn_comment(_pid, _gbody, _mn_key)
                                 st.session_state[f"grp_ans_{t['content_id']}"] = ""
                                 st.success("Answer posted to Mighty Networks.")
                             except Exception as e:
@@ -1237,13 +787,65 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
         for _, t in done_tix.iterrows():
             _s = (t.get("ticket_status") or "").lower()
             st.markdown(f"""
-<div style="background:#f9fafb;border:1px solid #f0f0f0;border-radius:10px;padding:10px 14px;margin-bottom:6px;opacity:0.6">
-  <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+<div class="done-comment-card">
+  <div class="comment-card-meta">
     <span class="badge badge-{_s}">{_s.replace("_"," ").capitalize()}</span>
-    <span style="font-size:0.72rem;color:#9ca3af">{str(t['created_at'])[:16]}</span>
+    <span class="comment-date">{str(t['created_at'])[:16]}</span>
   </div>
-  <div style="font-size:0.84rem;color:#6b7280;line-height:1.5">{t.get("body_preview") or "<em>(empty)</em>"}</div>
+  <div class="done-comment-body">{t.get("body_preview") or "<em>(empty)</em>"}</div>
 </div>""", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ACTION DIALOGS — opened from the ticket table Action dropdown
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.dialog("Flag Ticket", width="small")
+def show_flag_dialog(content_id: str, row_dict: dict):
+    mem = row_dict.get("member_name") or "Unknown"
+    st.markdown(f"Flag ticket from **{mem}** for follow-up review.")
+    flag_reason = st.text_area(
+        "Report / Reason",
+        placeholder="Describe what's wrong or why this needs attention…",
+        height=120,
+        key=f"flag_reason_{content_id}",
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("Flag ticket", type="primary", use_container_width=True, key=f"flag_confirm_{content_id}"):
+        if flag_reason.strip():
+            bq_client.update_ticket_meta(
+                content_id, "flagged",
+                row_dict.get("assigned_to", ""),
+                row_dict.get("domain", ""),
+                feedback_reason=flag_reason.strip(),
+            )
+            st.session_state._status_overrides[content_id] = "flagged"
+            st.rerun()
+        else:
+            st.warning("Please add a reason before flagging.")
+    if c2.button("Cancel", use_container_width=True, key=f"flag_cancel_{content_id}"):
+        st.rerun()
+
+
+@st.dialog("Assign Ticket", width="small")
+def show_assign_dialog(content_id: str, row_dict: dict):
+    mem = row_dict.get("member_name") or "Unknown"
+    st.markdown(f"Assign ticket from **{mem}** to a grant coach.")
+    _opts = ["— unassigned —"] + team_members
+    _cur  = row_dict.get("assigned_to") or "— unassigned —"
+    if _cur not in _opts:
+        _cur = "— unassigned —"
+    new_coach = st.selectbox("Grant Coach", _opts, index=_opts.index(_cur), key=f"assign_sel_{content_id}")
+    if st.button("Save", type="primary", use_container_width=True, key=f"assign_save_{content_id}"):
+        _av = "" if new_coach == "— unassigned —" else new_coach
+        bq_client.update_ticket_meta(
+            content_id,
+            row_dict.get("ticket_status") or "open",
+            _av,
+            row_dict.get("domain") or "",
+        )
+        st.cache_data.clear()
+        st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1263,14 +865,14 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+if not st.session_state.show_filters:
+    if st.button("▶  Filters", key="show_filters_btn"):
+        st.session_state.show_filters = True
+        st.rerun()
+
 tab_main, tab_reports, tab_train, tab_settings, tab_admin, tab_inbox = st.tabs(["🎫 Tickets", "📊 Reports", "🤖 Train AI", "⚙️ Settings", "👥 Admin", "📬 Inbox"])
 
-_QUICK_STATUSES = ["open", "assigned", "answered", "closed", "cancelled", "flagged", "not_a_question"]
-_QUICK_STATUS_LABELS = {
-    "open": "open", "assigned": "assigned", "answered": "answered",
-    "closed": "closed", "cancelled": "cancelled", "flagged": "flagged",
-    "not_a_question": "✗ not a question",
-}
+_ACTION_OPTS   = ["— action —", "Answer", "Close", "Flag", "Not a question", "Assign"]
 
 @st.fragment
 def render_ticket_table(tickets, team_members, filter_status="All"):
@@ -1311,15 +913,55 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
     _page_keys  = _all_keys[_page * _PAGE_SIZE : (_page + 1) * _PAGE_SIZE]
     _page_gk    = {k: seen_gk[k] for k in _page_keys}
 
-    _URG_DOT_COLOR = {"normal": GREEN, "urgent": YELLOW, "critical": RED}
-    def _urg_dot(urg: str) -> str:
-        color = _URG_DOT_COLOR.get(urg, "#ccc")
-        return f'<div style="width:10px;height:10px;border-radius:50%;background:{color};display:inline-block;"></div>'
+    # ── Action short-circuit ──────────────────────────────────────────────────
+    # on_change fired on a previous render — process BEFORE drawing any rows
+    # so we skip a full 25-row render pass.
+    _triggered = st.session_state.pop("_act_triggered", None)
+    if _triggered:
+        _t_cid   = _triggered["content_id"]
+        _t_act   = _triggered["action"]
+        _t_rdict = _triggered.get("row_dict", {})
+        _is_grp  = _triggered.get("is_group", False)
 
-    h0, h1, h2, h3, h5, h6 = st.columns([1.3, 5.0, 0.4, 1.1, 0.35, 0.6])
+        if _is_grp:
+            _open_ids = _triggered.get("open_content_ids", [])
+            _g_tid    = _triggered.get("thread_id", "")
+            _g_mid    = _triggered.get("member_id", "")
+            _g_mname  = _triggered.get("member_name", "")
+            if _t_act == "Answer":
+                st.session_state._open_group = (_g_tid, _g_mid, _g_mname)
+                st.rerun(scope="app")  # must reach top-level dialog trigger
+            elif _t_act == "Close":
+                for _oid in _open_ids:
+                    bq_client.update_ticket_meta(_oid, "closed", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""))
+                    st.session_state._status_overrides[_oid] = "closed"
+                st.rerun()
+            elif _t_act == "Not a question":
+                for _oid in _open_ids:
+                    bq_client.update_ticket_meta(_oid, "not_a_question", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""), feedback_reason="flagged_via_quick_status")
+                    st.session_state._status_overrides[_oid] = "not_a_question"
+                st.rerun()
+            else:
+                # Flag / Assign — use representative ticket
+                st.session_state._pending_action = {"action": _t_act, "content_id": _t_cid, "row": _t_rdict}
+                st.rerun(scope="app")  # must reach top-level dialog trigger
+        else:
+            if _t_act == "Close":
+                bq_client.update_ticket_meta(_t_cid, "closed", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""))
+                st.session_state._status_overrides[_t_cid] = "closed"
+                st.rerun()
+            elif _t_act == "Not a question":
+                bq_client.update_ticket_meta(_t_cid, "not_a_question", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""), feedback_reason="flagged_via_quick_status")
+                st.session_state._status_overrides[_t_cid] = "not_a_question"
+                st.rerun()
+            else:
+                st.session_state._pending_action = {"action": _t_act, "content_id": _t_cid, "row": _t_rdict}
+                st.rerun(scope="app")  # must reach top-level dialog trigger
+
+    h0, h1, h3, h6 = st.columns([1.3, 5.6, 1.3, 0.6])
     for col, label in zip(
-        [h0, h1, h2, h3, h5, h6],
-        ["Member", "Question", "Urg", "Status", "", "Coach"],
+        [h0, h1, h3, h6],
+        ["Member", "Question", "Action", "Coach"],
     ):
         col.markdown(f'<span class="tbl-header">{label}</span>', unsafe_allow_html=True)
 
@@ -1335,59 +977,58 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
             if overridden and overridden != filter_status:
                 continue
 
+        if _shown > 0:
+            st.markdown('<div class="ticket-divider"></div>', unsafe_allow_html=True)
+
         _shown += 1
-        c0, c1, c2, c3, c5, c6 = st.columns([1.3, 5.0, 0.4, 1.1, 0.35, 0.6])
+        c0, c1, c3, c6 = st.columns([1.3, 5.6, 1.3, 0.6])
 
         mem_name = row["member_name"] or "Unknown"
-        if c0.button(mem_name, key=f"member_{gk}", use_container_width=True):
-            st.session_state.member_id_filter = str(row["member_id"])
-            st.session_state._ticket_page = 0
-            st.rerun()
+        _row_domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
+        _row_urg = (row.get("urgency") or "normal").lower()
+        _urg_labels = {"normal": "🟢", "urgent": "🟡", "critical": "🔴"}
+        _meta_parts = []
+        if _row_domain_icon:
+            _meta_parts.append(_row_domain_icon)
+        _meta_parts.append(_urg_labels.get(_row_urg, "🟢") + " " + _row_urg)
+        c0.markdown(
+            f'<div class="member-name">{mem_name}</div>'
+            f'<div style="font-size:0.7rem;color:var(--color-text-muted);margin-top:2px">{"  ·  ".join(_meta_parts)}</div>',
+            unsafe_allow_html=True,
+        )
         c0.caption(str(row["created_at"])[:10])
 
         if len(grp) == 1:
-            domain_icon  = DOMAIN_ICON.get(row.get("domain") or "", "")
+            domain_icon  = _row_domain_icon
             full_text    = str(row["body_preview"] or "")
-            short_text   = full_text[:160] + ("…" if len(full_text) > 160 else "")
-            tooltip_text = full_text.replace("<", "&lt;").replace(">", "&gt;")
-            _tip = (
-                f'<span class="tip-wrap">'
-                f'<small style="color:#4a52a3;font-weight:500;cursor:default">{short_text}</small>'
-                f'<div class="tip-box">{tooltip_text}</div>'
-                f'</span>'
-            )
-            if domain_icon:
-                c1.markdown(f'<span class="domain-circle">{domain_icon}</span>{_tip}', unsafe_allow_html=True)
-            else:
-                c1.markdown(_tip, unsafe_allow_html=True)
+            safe_text    = full_text.replace("<", "&lt;").replace(">", "&gt;")
+            c1.markdown(f'<span style="font-size:var(--font-base);color:var(--color-text)">{safe_text}</span>', unsafe_allow_html=True)
 
-            urg = (row.get("urgency") or "normal").lower()
-            c2.markdown(
-                f'<div style="padding-top:6px;text-align:center">{_urg_dot(urg)}</div>',
-                unsafe_allow_html=True,
-            )
 
-            _cur_s = st.session_state._status_overrides.get(
-                row["content_id"],
-                row.get("ticket_status") or "open",
-            )
-            _cur_s = _cur_s if _cur_s in _QUICK_STATUSES else "open"
+            _act_key = f"act_{row['content_id']}"
+            _cid     = row["content_id"]
+            _rdict   = row.to_dict()
+
+            # Always wipe the widget key before rendering so stale values from
+            # previous selections can't accidentally fire on unrelated reruns.
+            if _act_key in st.session_state:
+                del st.session_state[_act_key]
+
+            def _on_action_change(cid=_cid, rdict=_rdict):
+                action = st.session_state.get(f"act_{cid}")
+                if action and action != "— action —":
+                    # Store in a separate key — cannot modify the widget's own key here.
+                    # Include row_dict so the top-level short-circuit has assigned_to + domain.
+                    st.session_state["_act_triggered"] = {"action": action, "content_id": cid, "row_dict": rdict}
+
             c3.selectbox(
-                "Status",
-                _QUICK_STATUSES,
-                index=_QUICK_STATUSES.index(_cur_s),
-                key=f"qs_{row['content_id']}",
-                on_change=_quick_status_save,
-                args=(row["content_id"], row.to_dict()),
-                format_func=lambda s: _QUICK_STATUS_LABELS.get(s, s),
+                "Action",
+                _ACTION_OPTS,
+                index=0,
+                key=_act_key,
+                on_change=_on_action_change,
                 label_visibility="collapsed",
             )
-
-
-            if c5.button("→", key=f"open_{row['content_id']}"):
-                st.session_state._open_ticket = row["content_id"]
-                st.session_state._open_ticket_thread = row.get("thread_id") or row["content_id"]
-                st.rerun()
 
             _ca = row.get("assigned_to") or ""
             c6.markdown(
@@ -1399,27 +1040,45 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
         else:
             n_open  = int(grp["ticket_status"].isin(_OPEN_S).sum())
             worst   = _URG_NAME[int(grp["urgency"].map(lambda u: _URG_RANK.get(u, 0)).max())]
-            domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
 
-            _di_html = f'<span class="domain-circle">{domain_icon}</span> ' if domain_icon else ""
+            _grp_tid   = row.get("thread_id") or ""
+            _grp_mid   = str(row.get("member_id") or "")
+            _grp_mname = mem_name
+            _open_ids_in_grp = grp[grp["ticket_status"].isin(_OPEN_S)]["content_id"].tolist()
+            _grp_rdict = row.to_dict()
+            _grp_cid   = row["content_id"]
+
             c1.markdown(
-                f'{_di_html}<small style="color:#4a52a3;font-weight:500"><strong>{len(grp)} comments</strong> in thread · {n_open} open</small>',
+                f'<small style="color:var(--color-primary);font-weight:500">'
+                f'<strong>{len(grp)} comments</strong> in thread'
+                f'{"  ·  " + str(n_open) + " open" if n_open else "  ·  all handled"}</small>',
                 unsafe_allow_html=True,
             )
-            c2.markdown(
-                f'<div style="padding-top:6px;text-align:center">{_urg_dot(worst)}</div>',
-                unsafe_allow_html=True,
+
+            _grp_act_key = f"act_g_{_grp_mid}_{_grp_tid.replace('-','_')}"
+            if _grp_act_key in st.session_state:
+                del st.session_state[_grp_act_key]
+
+            def _on_grp_action(tid=_grp_tid, mid=_grp_mid, mname=_grp_mname,
+                                open_ids=_open_ids_in_grp, rdict=_grp_rdict, cid=_grp_cid):
+                action = st.session_state.get(f"act_g_{mid}_{tid.replace('-','_')}")
+                if action and action != "— action —":
+                    st.session_state["_act_triggered"] = {
+                        "action":           action,
+                        "content_id":       cid,
+                        "row_dict":         rdict,
+                        "is_group":         True,
+                        "thread_id":        tid,
+                        "member_id":        mid,
+                        "member_name":      mname,
+                        "open_content_ids": open_ids,
+                    }
+
+            c3.selectbox(
+                "Action", _ACTION_OPTS, index=0,
+                key=_grp_act_key, on_change=_on_grp_action,
+                label_visibility="collapsed",
             )
-            c3.markdown(f'<span class="badge badge-open">{n_open} open</span>', unsafe_allow_html=True)
-
-
-            if c5.button("→", key=f"open_grp_{gk}"):
-                st.session_state._open_group = (
-                    str(row["thread_id"]),
-                    str(row["member_id"]),
-                    mem_name,
-                )
-                st.rerun()
 
             _ca = row.get("assigned_to") or ""
             c6.markdown(
@@ -1448,34 +1107,7 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
             st.rerun()
 
 
-def _quick_status_save(content_id: str, row_dict: dict):
-    new_status = st.session_state.get(f"qs_{content_id}")
-    if not new_status or new_status == row_dict.get("ticket_status"):
-        return
-    assignee = row_dict.get("assigned_to") or ""
-    domain   = row_dict.get("domain") or ""
 
-    # "not a question" → write feedback_reason so grant_classification_feedback
-    # view picks it up (view filters on feedback_reason IS NOT NULL) and uses
-    # this as a negative training example for the classifier.
-    feedback_reason = None
-    if new_status == "not_a_question":
-        feedback_reason = "flagged_via_quick_status"
-
-    bq_client.update_ticket_meta(content_id, new_status, assignee, domain, feedback_reason=feedback_reason)
-
-    # If closed/cancelled with no prior team comment → log as potential false positive
-    if new_status in ("closed", "cancelled") and not row_dict.get("team_commented"):
-        bq_client.log_event(
-            level="INFO",
-            source="closed_without_comment",
-            message=f"Ticket {content_id} closed as '{new_status}' without team comment — possible classifier false positive",
-            detail=f"member_id={row_dict.get('member_id')} domain={row_dict.get('domain')}",
-        )
-    # Patch locally so the dropdown reflects the change immediately.
-    # Do NOT clear the full cache here — that would re-run all BQ queries and
-    # freeze the UI. The Refresh button does a full reload when the user wants it.
-    st.session_state._status_overrides[content_id] = new_status
 
 
 # ── MAIN TAB ──────────────────────────────────────────────────────────────────
@@ -1488,24 +1120,29 @@ with tab_main:
     open_stats  = load_open_stats()
     daily_stats = load_daily_stats()
 
-    # ── KPI Row A ─────────────────────────────────────────────────────────────
-    a1, a2, a3, a4 = st.columns(4)
-    a1.markdown(kpi_card("Open",     int(open_stats.get("open",     0)), "#2d6ee0"), unsafe_allow_html=True)
-    a2.markdown(kpi_card("Normal",   int(open_stats.get("normal",   0)), "#2e9b2e"), unsafe_allow_html=True)
-    a3.markdown(kpi_card("Urgent",   int(open_stats.get("urgent",   0)), "#f5c520"), unsafe_allow_html=True)
-    a4.markdown(kpi_card("Critical", int(open_stats.get("critical", 0)), "#e03c3c"), unsafe_allow_html=True)
+    # ── KPI toggle ────────────────────────────────────────────────────────────
+    _kpi_label = "▲ Hide stats" if st.session_state.show_kpis else "▼ Show stats"
+    if st.button(_kpi_label, key="toggle_kpis"):
+        st.session_state.show_kpis = not st.session_state.show_kpis
+        st.rerun()
 
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    # ── KPI Row B ─────────────────────────────────────────────────────────────
-    answered_today = int(daily_stats.get("answered_today", 0))
-    in_today       = int(daily_stats.get("in_today", 0))
-    total_open     = int(open_stats.get("open", 0))
-    goal           = int(daily_stats.get("goal", config.DAILY_GOAL))
-    b1, b2, b3, b4 = st.columns(4)
-    b1.markdown(kpi_b_card("New questions today",        in_today),   unsafe_allow_html=True)
-    b2.markdown(kpi_b_card(f"Answered today (from {total_open:,} open)",  answered_today), unsafe_allow_html=True)
-    b3.markdown(kpi_b_card("Daily avg (30d)", daily_stats.get("daily_avg", 0)),        unsafe_allow_html=True)
-    b4.markdown(goal_card(answered_today, goal),                                       unsafe_allow_html=True)
+    # ── KPI Row A ─────────────────────────────────────────────────────────────
+    if st.session_state.show_kpis:
+        a1, a2, a3, a4 = st.columns(4)
+        a1.markdown(kpi_card("Open",     int(open_stats.get("open",     0)), "open"),     unsafe_allow_html=True)
+        a2.markdown(kpi_card("Normal",   int(open_stats.get("normal",   0)), "normal"),   unsafe_allow_html=True)
+        a3.markdown(kpi_card("Urgent",   int(open_stats.get("urgent",   0)), "urgent"),   unsafe_allow_html=True)
+        a4.markdown(kpi_card("Critical", int(open_stats.get("critical", 0)), "critical"), unsafe_allow_html=True)
+
+        st.markdown("<div style='height:var(--space-3)'></div>", unsafe_allow_html=True)
+
+        answered_today = int(daily_stats.get("answered_today", 0))
+        in_today       = int(daily_stats.get("in_today", 0))
+        total_open     = int(open_stats.get("open", 0))
+        b1, b2, b3 = st.columns(3)
+        b1.markdown(kpi_card("New questions today",                        in_today),                        unsafe_allow_html=True)
+        b2.markdown(kpi_card(f"Answered today (from {total_open:,} open)", answered_today),                  unsafe_allow_html=True)
+        b3.markdown(kpi_card("Daily avg (30d)",                            daily_stats.get("daily_avg", 0)), unsafe_allow_html=True)
 
     # ── Ticket list ───────────────────────────────────────────────────────────
     # Count unique member+thread groups — this is what the user actually sees,
@@ -1525,17 +1162,21 @@ with tab_main:
 
     # Dialogs can't be opened from inside @st.fragment, so the fragment sets
     # session state and st.rerun() brings us here to open the dialog.
-    if st.session_state._open_ticket:
-        _cid = st.session_state._open_ticket
-        _tid_hint = st.session_state._open_ticket_thread
-        st.session_state._open_ticket = None
-        st.session_state._open_ticket_thread = None
-        show_ticket_dialog(_cid, thread_id_hint=_tid_hint)
 
     if st.session_state._open_group:
         _tid, _mid, _mname = st.session_state._open_group
         st.session_state._open_group = None
         show_group_dialog(thread_id=_tid, member_id=_mid, member_name=_mname)
+
+    if st.session_state._pending_action:
+        _pa = st.session_state._pending_action
+        st.session_state._pending_action = None
+        if _pa["action"] == "Answer":
+            show_ticket_dialog(_pa["content_id"], thread_id_hint=_pa["row"].get("thread_id"))
+        elif _pa["action"] == "Flag":
+            show_flag_dialog(_pa["content_id"], _pa["row"])
+        elif _pa["action"] == "Assign":
+            show_assign_dialog(_pa["content_id"], _pa["row"])
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1740,7 +1381,7 @@ with tab_settings:
                 st.info(f"**Last change:** {row['change_reason']}")
 
             with st.expander("View full prompt text"):
-                st.code(row["prompt_text"], language=None)
+                st.markdown(f'<pre class="prompt-block">{row["prompt_text"]}</pre>', unsafe_allow_html=True)
 
         st.divider()
 
@@ -1765,7 +1406,7 @@ with tab_settings:
                     if row["change_reason"] and str(row["change_reason"]).strip():
                         st.markdown(f"**Why it was replaced:** {row['change_reason']}")
                         st.divider()
-                    st.code(row["prompt_text"], language=None)
+                    st.markdown(f'<pre class="prompt-block">{row["prompt_text"]}</pre>', unsafe_allow_html=True)
 
 
 # ── ADMIN TAB ─────────────────────────────────────────────────────────────────
@@ -1787,8 +1428,11 @@ with tab_admin:
             cc1.markdown(f"**{coach['full_name']}**")
             cc2.caption(coach.get("email") or "")
             if cc3.button("Remove", key=f"remove_coach_{coach['member_id']}"):
-                bq_client.remove_grant_coach(int(coach["member_id"]))
-                st.cache_data.clear()
+                _rid = int(coach["member_id"])
+                concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
+                    bq_client.remove_grant_coach, _rid
+                )
+                load_coaches.clear()
                 st.rerun()
     else:
         st.info("No grant coaches added yet.")
@@ -1796,27 +1440,20 @@ with tab_admin:
     st.divider()
     st.markdown("#### Add a Grant Coach")
 
-    # Cache the full member list — search filters it in-memory so there's no BQ
-    # round-trip per keystroke. TTL=300 since the member list changes rarely.
-    @st.cache_data(ttl=300, show_spinner="Loading members…")
-    def _load_all_members():
-        return bq_client.search_members("", limit=5000)
+    # Live BQ search — the community has 24k+ members so in-memory caching
+    # is not viable. Query runs on each rerun when ≥3 chars are typed.
+    @st.cache_data(ttl=60, show_spinner="Searching…")
+    def _search_members_live(q: str):
+        return bq_client.search_members(q, limit=20)
 
-    _all_members = _load_all_members()
     _existing_coach_ids = set(coaches_df["member_id"].tolist()) if not coaches_df.empty else set()
 
     search_query = st.text_input("Search member by name or email", placeholder="e.g. Jane Smith")
 
-    _q = search_query.strip().lower()
-    if len(_q) >= 2:
-        results = _all_members[
-            _all_members.apply(
-                lambda r: _q in (r.get("full_name") or "").lower()
-                       or _q in (r.get("email_address") or "").lower(),
-                axis=1,
-            )
-            & ~_all_members["member_id"].isin(_existing_coach_ids)
-        ].head(20)
+    _q = search_query.strip()
+    if len(_q) >= 3:
+        _raw = _search_members_live(_q)
+        results = _raw[~_raw["member_id"].isin(_existing_coach_ids)].head(20)
 
         if results.empty:
             st.caption("No members found.")
@@ -1830,21 +1467,24 @@ with tab_admin:
                     if not _admin_api_key:
                         st.error("No MN API key found. Add yours in the ⚙️ Settings tab first.")
                     else:
-                        # 1. Write to BQ + update UI immediately
-                        bq_client.add_grant_coach(
-                            member_id=int(member["member_id"]),
-                            full_name=str(member["full_name"]),
-                            email=str(member.get("email_address") or ""),
-                            added_by=current_user or "admin",
-                        )
-                        # 2. Fire MN host promotion in background — doesn't block UI
-                        _mid  = int(member["member_id"])
-                        _key  = _admin_api_key
+                        # Run BQ insert + MN promotion together in background —
+                        # neither blocks the UI. Coach list cache is cleared after
+                        # insert so the next coaches reload picks up the new row.
+                        _mid   = int(member["member_id"])
+                        _fname = str(member["full_name"])
+                        _email = str(member.get("email_address") or "")
+                        _by    = current_user or "admin"
+                        _key   = _admin_api_key
+
+                        def _promote_bg(mid, fname, email, added_by, api_key):
+                            bq_client.add_grant_coach(mid, fname, email, added_by)
+                            load_coaches.clear()
+                            bq_client.mn_promote_to_host(mid, api_key)
+
                         concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
-                            bq_client.mn_promote_to_host, _mid, _key
+                            _promote_bg, _mid, _fname, _email, _by, _key
                         )
-                        st.cache_data.clear()
-                        st.session_state["invite_name"] = str(member["full_name"])
+                        st.session_state["invite_name"] = _fname
                         st.rerun()
 
     if "invite_name" in st.session_state:
@@ -1876,11 +1516,10 @@ _FEEDBACK_STATUS_COLORS = {
 @st.fragment
 def render_inbox(current_user):
     # ── Hero banner ───────────────────────────────────────────────────────────
-    st.markdown(f"""
-    <div style="background:linear-gradient(135deg,{INDIGO} 0%,#2d6ee0 100%);
-                border-radius:16px;padding:28px 32px;margin-bottom:24px;color:#fff">
-      <div style="font-size:1.5rem;font-weight:700;margin-bottom:8px">📬 Team Inbox</div>
-      <div style="font-size:1rem;line-height:1.6;opacity:0.92">
+    st.markdown("""
+    <div class="inbox-hero">
+      <div class="inbox-hero-title">📬 Team Inbox</div>
+      <div class="inbox-hero-body">
         This is your direct line to me. Submit a review, flag a problem, or drop a suggestion —
         <strong>you cannot give me enough new input.</strong> Every submission becomes a ticket
         and I will personally reply with exactly what we will do about it.
@@ -1966,9 +1605,8 @@ def render_inbox(current_user):
                     expanded=False,
                 ):
                     st.markdown(
-                        f'<span style="display:inline-block;padding:2px 10px;border-radius:99px;'
-                        f'background:{status_color}22;color:{status_color};font-weight:600;'
-                        f'font-size:0.78rem;margin-bottom:8px">{row["status"].upper()}</span>',
+                        f'<span class="feedback-badge" style="background:{status_color}22;color:{status_color}">'
+                        f'{row["status"].upper()}</span>',
                         unsafe_allow_html=True,
                     )
                     st.markdown(row["body"])
@@ -1976,10 +1614,8 @@ def render_inbox(current_user):
                     if row.get("reply_text"):
                         st.divider()
                         st.markdown(
-                            f'<div style="background:#f0f4ff;border-left:3px solid {INDIGO};'
-                            f'padding:10px 14px;border-radius:0 8px 8px 0;margin-top:4px">'
-                            f'<div style="font-size:0.75rem;color:#6b7280;margin-bottom:4px">'
-                            f'Reply from {row.get("replied_by","admin").split("@")[0]} · {str(row.get("replied_at",""))[:10]}</div>'
+                            f'<div class="reply-block">'
+                            f'<div class="reply-meta">Reply from {row.get("replied_by","admin").split("@")[0]} · {str(row.get("replied_at",""))[:10]}</div>'
                             f'<div>{row["reply_text"]}</div></div>',
                             unsafe_allow_html=True,
                         )
