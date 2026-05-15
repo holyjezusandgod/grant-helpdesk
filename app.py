@@ -566,7 +566,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
                 try:
                     _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name)
                     bq_client.post_mn_comment(_post_id, _body, _mn_key)
-                    st.session_state[f"answer_{content_id}"] = ""
+                    st.session_state.pop(f"answer_{content_id}", None)
                     st.cache_data.clear()
                     st.success("Answer posted to Mighty Networks.")
                 except Exception as e:
@@ -745,7 +745,7 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
                             try:
                                 _gbody = build_mn_body(ans.strip(), _grp_tag, _g_mem_id, member_name)
                                 bq_client.post_mn_comment(_pid, _gbody, _mn_key)
-                                st.session_state[f"grp_ans_{t['content_id']}"] = ""
+                                st.session_state.pop(f"grp_ans_{t['content_id']}", None)
                                 st.success("Answer posted to Mighty Networks.")
                             except Exception as e:
                                 st.error(f"Failed: {e}")
