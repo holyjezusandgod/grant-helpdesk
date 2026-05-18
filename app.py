@@ -447,18 +447,32 @@ def _cached_thread(thread_id: str):
 
 @st.dialog("Ticket Detail", width="large")
 def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
-    # Fetch ticket detail on the main thread — @st.cache_data is unreliable when
-    # called from a ThreadPoolExecutor and may return stale results.
-    # The thread fetch can still run in parallel since it uses a separate cache key.
-    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    _fut_thread = _executor.submit(_cached_thread, thread_id_hint) if thread_id_hint else None
-    ticket = _cached_ticket_detail(content_id)
+    # ── Data fetch ─────────────────────────────────────────────────────────────
+    # All BQ calls happen here before any rendering, so coaches see a spinner
+    # instead of a blank dialog while data loads. The thread fetch runs in a
+    # background thread (separate cache key — safe for st.cache_data); the ticket
+    # detail stays on the main thread as st.cache_data is not thread-safe there.
+    with st.spinner("Loading ticket…"):
+        try:
+            ticket = _cached_ticket_detail(content_id)
+        except Exception as _e:
+            st.error(f"Could not load ticket — please try again. ({_e})")
+            return
 
-    if not ticket:
-        _executor.shutdown(wait=False)
-        st.warning("Ticket not found.")
-        return
+        if not ticket:
+            st.warning("Ticket not found.")
+            return
 
+        thread_id = ticket.get("thread_id") or content_id
+        _hint     = thread_id_hint or thread_id
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _executor:
+            _fut_thread = _executor.submit(_cached_thread, _hint)
+            try:
+                thread = _fut_thread.result(timeout=15)
+            except Exception:
+                thread = pd.DataFrame()   # graceful fallback — show ticket without thread
+
+    # ── Render ─────────────────────────────────────────────────────────────────
     status_icon  = STATUS_ICON.get(ticket.get("ticket_status"), "⚪")
     urgency_icon = URGENCY_ICON.get(ticket.get("urgency"), "⚪")
     content_type = ticket.get("content_type") or "—"
@@ -494,11 +508,6 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
   </div>
 </div>
 """, unsafe_allow_html=True)
-
-    # Full thread — use parallel result if available, otherwise fetch now
-    thread_id = ticket.get("thread_id") or content_id
-    thread = _fut_thread.result() if _fut_thread else _cached_thread(thread_id)
-    _executor.shutdown(wait=False)
 
     if not thread.empty:
         # ── Root post ─────────────────────────────────────────────────────────
@@ -561,18 +570,115 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
             "Answer", key=f"answer_{content_id}",
             label_visibility="collapsed", height=160,
         )
-        if st.button("Post Answer to MN", key=f"post_answer_{content_id}", type="primary"):
+
+        # ── Follow-up scheduler ───────────────────────────────────────────────
+        _fu_msg, _fu_days = "", 7
+        _fu_enabled = st.checkbox(
+            "Schedule a follow-up question",
+            key=f"followup_cb_{content_id}",
+        )
+        if _fu_enabled:
+            _first_name = (_mem_name or "").split()[0] or "there"
+            _fu_default = (
+                f"Hi {_first_name}, just checking in — did everything get resolved? "
+                f"Feel free to reach out if there's anything else we can help with!"
+            )
+            _fu_left, _fu_right = st.columns([5, 1])
+            _fu_msg = _fu_left.text_area(
+                "Follow-up message",
+                value=_fu_default,
+                key=f"followup_msg_{content_id}",
+                height=80,
+            )
+            _fu_days = _fu_right.number_input(
+                "Days", min_value=1, max_value=60, value=7,
+                key=f"followup_days_{content_id}",
+            )
+            _fu_right.caption("days")
+        # ─────────────────────────────────────────────────────────────────────
+
+        _btn_post, _btn_close = st.columns([2, 1])
+        if _btn_post.button("Post Answer to MN", key=f"post_answer_{content_id}", type="primary", use_container_width=True):
             if answer_body.strip():
                 try:
                     _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name)
                     bq_client.post_mn_comment(_post_id, _body, _mn_key)
+                    bq_client.update_ticket_meta(
+                        content_id,
+                        "answered",
+                        ticket.get("assigned_to") or "",
+                        ticket.get("domain") or "",
+                    )
+                    if _fu_enabled and _fu_msg.strip():
+                        _fu_body = build_mn_body(_fu_msg.strip(), True, _mem_id, _mem_name)
+                        bq_client.queue_followup(
+                            ticket_id=content_id,
+                            content_id=_post_id,
+                            content_type=ticket.get("content_type", "post"),
+                            member_id=str(_mem_id) if _mem_id else "",
+                            member_name=_mem_name,
+                            message=_fu_body,
+                            days=int(_fu_days),
+                            scheduled_by=current_user or "",
+                        )
+                    st.session_state._status_overrides[content_id] = "answered"
                     st.session_state.pop(f"answer_{content_id}", None)
                     st.cache_data.clear()
-                    st.success("Answer posted to Mighty Networks.")
+                    st.success("Answer posted to Mighty Networks." + (" Follow-up scheduled." if _fu_enabled else ""))
                 except Exception as e:
                     st.error(f"Failed to post: {e}")
             else:
                 st.warning("Answer cannot be empty.")
+        if _btn_close.button("✅ Answer & Close", key=f"answer_close_{content_id}", use_container_width=True):
+            bq_client.update_ticket_meta(
+                content_id,
+                "closed",
+                ticket.get("assigned_to") or "",
+                ticket.get("domain") or "",
+                closed_by=current_user,
+            )
+            st.session_state._status_overrides[content_id] = "closed"
+            st.cache_data.clear()
+            st.rerun()
+
+    st.divider()
+
+    # RSVP section
+    st.markdown("**📅 RSVP to Event**")
+    _events = bq_client.get_upcoming_events()
+    if not _events:
+        st.caption("No upcoming events found. The sync job runs daily at 06:00.")
+    else:
+        _mem_id   = ticket.get("member_id")
+        _mem_name = (ticket.get("member_name") or "member").split()[0]
+        _rsvp_mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
+
+        def _fmt_event(e):
+            starts = str(e.get("starts_at", ""))[:16].replace("T", " ")
+            return f"{starts} — {e['title']}"
+
+        _sel = st.selectbox(
+            "Select event",
+            _events,
+            format_func=_fmt_event,
+            key=f"rsvp_event_{content_id}",
+            label_visibility="collapsed",
+        )
+        if not _rsvp_mn_key:
+            st.warning("Add your MN API key in ⚙️ Settings to RSVP members.")
+        elif _sel:
+            if st.button(
+                f"RSVP {_mem_name} →",
+                key=f"rsvp_btn_{content_id}",
+                type="primary",
+                use_container_width=True,
+            ):
+                try:
+                    bq_client.rsvp_member_to_event(_sel["event_id"], _mem_id, _rsvp_mn_key)
+                    bq_client.log_rsvp(content_id, _sel["event_id"], _mem_id, current_user)
+                    st.success(f"✅ {ticket.get('member_name','Member')} RSVP'd to **{_sel['title']}**")
+                except RuntimeError as e:
+                    st.error(f"RSVP failed: {e}")
 
     st.divider()
 
@@ -827,6 +933,42 @@ def show_flag_dialog(content_id: str, row_dict: dict):
         st.rerun()
 
 
+@st.dialog("Delete Post from Mighty Networks", width="small")
+def show_delete_dialog(content_id: str, row_dict: dict):
+    mem  = row_dict.get("member_name") or "Unknown"
+    prev = row_dict.get("body_preview") or ""
+    st.error(
+        "⚠️ **This will permanently delete this post from Mighty Networks.**\n\n"
+        "This action cannot be undone.",
+        icon="🗑️",
+    )
+    st.markdown(f"**Member:** {mem}")
+    if prev:
+        st.caption(prev[:200] + ("…" if len(prev) > 200 else ""))
+    _mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
+    if not _mn_key:
+        st.warning("No Mighty Networks API key set. Add yours in the ⚙️ Settings tab.")
+        if st.button("Close", use_container_width=True, key=f"del_close_{content_id}"):
+            st.rerun()
+        return
+    c1, c2 = st.columns(2)
+    if c1.button("🗑️ Delete from MN", type="primary", use_container_width=True, key=f"del_confirm_{content_id}"):
+        try:
+            bq_client.delete_mn_post(content_id, _mn_key)
+            bq_client.update_ticket_meta(
+                content_id,
+                "cancelled",
+                row_dict.get("assigned_to", ""),
+                row_dict.get("domain", ""),
+            )
+            st.session_state._status_overrides[content_id] = "cancelled"
+            st.rerun()
+        except RuntimeError as e:
+            st.error(f"MN API error: {e}")
+    if c2.button("Cancel", use_container_width=True, key=f"del_cancel_{content_id}"):
+        st.rerun()
+
+
 @st.dialog("Assign Ticket", width="small")
 def show_assign_dialog(content_id: str, row_dict: dict):
     mem = row_dict.get("member_name") or "Unknown"
@@ -870,9 +1012,9 @@ if not st.session_state.show_filters:
         st.session_state.show_filters = True
         st.rerun()
 
-tab_main, tab_reports, tab_train, tab_settings, tab_admin, tab_inbox = st.tabs(["🎫 Tickets", "📊 Reports", "🤖 Train AI", "⚙️ Settings", "👥 Admin", "📬 Inbox"])
+tab_main, tab_reports, tab_train, tab_settings, tab_admin, tab_inbox = st.tabs(["🎫 Tickets", "📊 Reports", "🔍 Review AI", "⚙️ Settings", "👥 Admin", "📬 Inbox"])
 
-_ACTION_OPTS   = ["— action —", "Answer", "Close", "Flag", "Not a question", "Assign"]
+_ACTION_OPTS   = ["— action —", "Answer", "Close", "Flag", "Not a question", "Assign", "Delete"]
 
 @st.fragment
 def render_ticket_table(tickets, team_members, filter_status="All"):
@@ -933,7 +1075,7 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
                 st.rerun(scope="app")  # must reach top-level dialog trigger
             elif _t_act == "Close":
                 for _oid in _open_ids:
-                    bq_client.update_ticket_meta(_oid, "closed", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""))
+                    bq_client.update_ticket_meta(_oid, "closed", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""), closed_by=current_user)
                     st.session_state._status_overrides[_oid] = "closed"
                 st.rerun()
             elif _t_act == "Not a question":
@@ -947,7 +1089,7 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
                 st.rerun(scope="app")  # must reach top-level dialog trigger
         else:
             if _t_act == "Close":
-                bq_client.update_ticket_meta(_t_cid, "closed", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""))
+                bq_client.update_ticket_meta(_t_cid, "closed", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""), closed_by=current_user)
                 st.session_state._status_overrides[_t_cid] = "closed"
                 st.rerun()
             elif _t_act == "Not a question":
@@ -986,14 +1128,37 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
         mem_name = row["member_name"] or "Unknown"
         _row_domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
         _row_urg = (row.get("urgency") or "normal").lower()
+        _row_status = (row.get("ticket_status") or "open").lower()
+        _is_answered = _row_status == "answered"
         _urg_labels = {"normal": "🟢", "urgent": "🟡", "critical": "🔴"}
         _meta_parts = []
         if _row_domain_icon:
             _meta_parts.append(_row_domain_icon)
-        _meta_parts.append(_urg_labels.get(_row_urg, "🟢") + " " + _row_urg)
+        _fu = _followup_map.get(str(row["content_id"]))
+        if _fu:
+            if _fu.get("status") == "pending":
+                try:
+                    import pandas as _pd
+                    _fu_ts = _pd.Timestamp(_fu["send_after"])
+                    if _fu_ts.tzinfo is None:
+                        _fu_ts = _fu_ts.tz_localize("UTC")
+                    _days_left = max(0, (_fu_ts - _pd.Timestamp.now(tz="UTC")).days)
+                except Exception:
+                    _days_left = "?"
+                _meta_parts.append(f"⏳ follow-up in {_days_left}d")
+            elif _fu.get("status") == "sent":
+                _meta_parts.append("✅ follow-up sent")
+        if _is_answered:
+            _status_html = '<span class="answered-badge">✓ Answered</span>'
+        else:
+            _status_html = _urg_labels.get(_row_urg, "🟢") + " " + _row_urg
+        _marker = '<div class="answered-row-marker"></div>' if _is_answered else ""
         c0.markdown(
+            f'{_marker}'
             f'<div class="member-name">{mem_name}</div>'
-            f'<div style="font-size:0.7rem;color:var(--color-text-muted);margin-top:2px">{"  ·  ".join(_meta_parts)}</div>',
+            f'<div style="font-size:0.7rem;color:var(--color-text-muted);margin-top:2px">'
+            f'{"  ·  ".join(_meta_parts) + ("  ·  " if _meta_parts else "") + _status_html}'
+            f'</div>',
             unsafe_allow_html=True,
         )
         c0.caption(str(row["created_at"])[:10])
@@ -1002,7 +1167,8 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
             domain_icon  = _row_domain_icon
             full_text    = str(row["body_preview"] or "")
             safe_text    = full_text.replace("<", "&lt;").replace(">", "&gt;")
-            c1.markdown(f'<span style="font-size:var(--font-base);color:var(--color-text)">{safe_text}</span>', unsafe_allow_html=True)
+            _body_class  = "answered-body" if _is_answered else ""
+            c1.markdown(f'<span class="{_body_class}" style="font-size:var(--font-base);color:var(--color-text)">{safe_text}</span>', unsafe_allow_html=True)
 
 
             _act_key = f"act_{row['content_id']}"
@@ -1119,6 +1285,7 @@ with tab_main:
     )
     open_stats  = load_open_stats()
     daily_stats = load_daily_stats()
+    _followup_map = bq_client.get_followup_statuses(tickets["content_id"].tolist()) if not tickets.empty else {}
 
     # ── KPI toggle ────────────────────────────────────────────────────────────
     _kpi_label = "▲ Hide stats" if st.session_state.show_kpis else "▼ Show stats"
@@ -1177,6 +1344,8 @@ with tab_main:
             show_flag_dialog(_pa["content_id"], _pa["row"])
         elif _pa["action"] == "Assign":
             show_assign_dialog(_pa["content_id"], _pa["row"])
+        elif _pa["action"] == "Delete":
+            show_delete_dialog(_pa["content_id"], _pa["row"])
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1239,68 +1408,110 @@ with tab_reports:
     st.button("📥 Export to Excel", disabled=True, help="Coming soon")
 
 
-# ── TRAIN AI TAB ──────────────────────────────────────────────────────────────
+# ── REVIEW AI CLASSIFICATIONS TAB ─────────────────────────────────────────────
 with tab_train:
-    st.subheader("Train AI")
+    st.subheader("Review AI Classifications")
+    st.caption(
+        "Everything below was classified as **not a question** by the AI. "
+        "Scan the list and click **This is a question** if the AI got it wrong. "
+        "Your corrections are sent to the training system to improve accuracy over time."
+    )
 
-    if "train_queue" not in st.session_state:
-        with st.spinner("Loading review queue…"):
-            q_df = bq_client.get_unreviewed_rejects()
-            st.session_state.train_queue = q_df.to_dict("records")
-            st.session_state.train_idx   = 0
+    # ── Filters ───────────────────────────────────────────────────────────────
+    _PERIOD_OPTS = {
+        "Last 24 hours": 1,
+        "Last 48 hours": 2,
+        "Last week":     7,
+        "Last month":    30,
+        "Last year":     365,
+    }
+    _rf1, _rf2, _rf3 = st.columns([2, 2, 1])
+    _period_label = _rf1.selectbox(
+        "Period", list(_PERIOD_OPTS.keys()),
+        index=0, key="review_period",
+        label_visibility="collapsed",
+    )
+    _name_filter = _rf2.text_input(
+        "Member name", placeholder="Filter by member name…",
+        key="review_name", label_visibility="collapsed",
+    )
+    if _rf3.button("↺ Refresh", key="review_refresh", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state._reviewed_ids = set()
+        st.rerun()
 
-    queue     = st.session_state.train_queue
-    idx       = st.session_state.train_idx
-    total     = len(queue)
-    remaining = total - idx
+    _days = _PERIOD_OPTS[_period_label]
 
-    if remaining <= 0:
-        st.success("All caught up — nothing left to review!")
-        if st.button("Reload queue"):
-            del st.session_state["train_queue"]
-            st.rerun()
+    # Track which items were actioned this session (optimistic hide before reload)
+    if "_reviewed_ids" not in st.session_state:
+        st.session_state._reviewed_ids = set()
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def load_review_queue(days: int):
+        return bq_client.get_unreviewed_rejects(days=days)
+
+    with st.spinner("Loading…"):
+        review_df = load_review_queue(_days)
+
+    # Deduplicate (safety net against duplicate content_ids in grant_tickets)
+    if not review_df.empty:
+        review_df = review_df.drop_duplicates(subset=["content_id"])
+
+    # Apply session-state filter (items actioned this session disappear instantly)
+    if not review_df.empty and st.session_state._reviewed_ids:
+        review_df = review_df[~review_df["content_id"].isin(st.session_state._reviewed_ids)]
+
+    # Apply member name filter
+    if _name_filter.strip() and not review_df.empty:
+        review_df = review_df[
+            review_df["member_name"].fillna("").str.contains(_name_filter.strip(), case=False, na=False)
+        ]
+
+    st.caption(f"{len(review_df)} item{'s' if len(review_df) != 1 else ''} to review")
+    st.divider()
+
+    if review_df.empty:
+        st.success("All clear — nothing flagged for review in this period.")
     else:
-        st.progress(idx / total if total > 0 else 1.0)
-        st.caption(f"{idx} reviewed · {remaining} remaining")
-        st.divider()
+        _TYPE_ICON = {"post": "📝", "article": "📄", "comment": "💬"}
 
-        item = queue[idx]
+        for _, item in review_df.iterrows():
+            cid      = item["content_id"]
+            ctype    = item.get("content_type") or "post"
+            ticon    = _TYPE_ICON.get(ctype, "📝")
+            name     = item.get("member_name") or "Unknown"
+            posted   = str(item.get("created_at", ""))[:10]
+            body     = item.get("body") or ""
+            preview  = body[:220] + ("…" if len(body) > 220 else "")
+            link     = item.get("permalink") or ""
 
-        meta1, meta2, meta3 = st.columns(3)
-        meta1.markdown(f"**Member:** {item.get('member_name') or '—'}")
-        meta2.markdown(f"**Type:** {(item.get('content_type') or '—').capitalize()}")
-        meta3.markdown(f"**Posted:** {str(item.get('created_at', ''))[:16]}")
-
-        permalink = item.get("permalink") or ""
-        if permalink:
-            st.markdown(f"[View on MightyNetworks ↗]({permalink})")
-
-        st.divider()
-        with st.container(height=100):
-            st.markdown(item.get("body") or "_(no content)_")
-
-        st.divider()
-
-        btn_incorrect, btn_correct = st.columns(2)
-
-        if btn_incorrect.button(
-            "Incorrect — this IS a question",
-            use_container_width=True,
-            type="primary",
-            key=f"incorrect_{item['content_id']}",
-        ):
-            bq_client.update_ticket_meta(item["content_id"], "confirmed_question", "")
-            st.session_state.train_idx += 1
-            st.rerun()
-
-        if btn_correct.button(
-            "Correct — not a question",
-            use_container_width=True,
-            key=f"correct_{item['content_id']}",
-        ):
-            bq_client.update_ticket_meta(item["content_id"], "not_a_question", "")
-            st.session_state.train_idx += 1
-            st.rerun()
+            with st.container():
+                _c1, _c2 = st.columns([5, 1])
+                with _c1:
+                    st.markdown(
+                        f"{ticon} **{name}** &nbsp;·&nbsp; "
+                        f"<span style='color:#6b7280;font-size:0.85rem'>{ctype} · {posted}</span>"
+                        + (f"&nbsp;&nbsp;<a href='{link}' target='_blank' style='font-size:0.8rem;color:#4a52a3'>↗ MN</a>" if link else ""),
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f"<div style='color:#374151;font-size:0.9rem;margin-top:2px'>{preview}</div>",
+                        unsafe_allow_html=True,
+                    )
+                with _c2:
+                    if st.button(
+                        "This is a question",
+                        key=f"isq_{cid}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        bq_client.update_ticket_meta(
+                            cid, "confirmed_question", "",
+                            feedback_reason="coach_review",
+                        )
+                        st.session_state._reviewed_ids.add(cid)
+                        st.rerun()
+            st.divider()
 
 
 # ── SETTINGS TAB ──────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ APP_NAME     = "Lesko Help Desk"
 APP_VERSION  = "0.1"
 DAILY_GOAL   = 50
 
-TICKET_STATUSES    = ["open", "assigned", "closed", "cancelled", "flagged"]
+TICKET_STATUSES    = ["open", "assigned", "answered", "closed", "cancelled", "flagged"]
 FEEDBACK_STATUSES  = ["not_a_question", "confirmed_question"]
 
 MEMBER_ASSIGNMENTS_TABLE = f"{PROJECT_ID}.{DATASET}.member_assignment_overrides"
@@ -27,8 +27,9 @@ PROMPT_CONFIG_TABLE     = f"{PROJECT_ID}.{DATASET}.grant_prompt_config"
 FEEDBACK_VIEW           = f"{PROJECT_ID}.{DATASET}.grant_classification_feedback"
 CLASSIFIER_TABLE        = f"{PROJECT_ID}.{DATASET}.grant_question_classifier"
 
-TEAM_API_KEYS_TABLE  = f"{PROJECT_ID}.{DATASET}.team_api_keys"
-GRANT_COACHES_TABLE  = f"{PROJECT_ID}.{DATASET}.grant_coaches"
+TEAM_API_KEYS_TABLE   = f"{PROJECT_ID}.{DATASET}.team_api_keys"
+GRANT_COACHES_TABLE   = f"{PROJECT_ID}.{DATASET}.grant_coaches"
+FOLLOWUP_QUEUE_TABLE  = f"{PROJECT_ID}.{DATASET}.followup_queue"
 
 MN_NETWORK_ID  = "4022250"
 MN_API_BASE    = "https://api.mn.co/admin/v1"

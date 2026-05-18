@@ -43,13 +43,15 @@ def log_event(level: str, source: str, message: str, detail: str = None):
         pass  # If BQ itself is down, nothing we can do here
 
 
-def get_unreviewed_rejects() -> pd.DataFrame:
+def get_unreviewed_rejects(days: int = 1) -> pd.DataFrame:
     """Posts/articles/comments the classifier rejected and the team hasn't reviewed yet."""
     sql = f"""
         SELECT *
         FROM `{config.TICKETS_TABLE}`
         WHERE ticket_status = 'not_a_question'
           AND manual_status IS NULL
+          AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {int(days)} DAY)
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY created_at DESC) = 1
         ORDER BY created_at DESC
     """
     return client.query(sql).to_dataframe()
@@ -81,7 +83,7 @@ def get_tickets(
         filters.append(f"ticket_status = '{status}'")
     else:
         # Feedback statuses are hidden from the default view
-        filters.append(f"ticket_status NOT IN ('not_a_question', 'confirmed_question')")
+        filters.append(f"ticket_status NOT IN ('not_a_question', 'confirmed_question', 'closed')")
     if assignee and assignee != "All":
         filters.append(f"assigned_to = '{assignee}'")
     if member_id:
@@ -108,10 +110,14 @@ def get_tickets(
     # Build EXCEPT and CASE clauses based on what columns actually exist in the table.
     # This makes the query forward/backward compatible as Dataform rebuilds the schema.
     _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
-    _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
     _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
     _optional_except = ["difficulty", "team_comment_replied"]
     _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
+    # Reopen clause: activates once grant_tickets has last_member_activity_at (post Dataform rebuild)
+    _reopen_clause = (
+        "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
+        "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
+    ) if "last_member_activity_at" in _gt_cols else ""
 
     sql = f"""
         WITH live AS (
@@ -121,10 +127,9 @@ def get_tickets(
                 tm.status                                               AS manual_status,
                 COALESCE(tm.domain, gt.domain)                          AS domain,
                 CASE
-                    WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
+                    {_reopen_clause}
                     WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                    WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
-                    ELSE 'open'
+                    ELSE gt.ticket_status
                 END                                                     AS ticket_status
             FROM `{config.TICKETS_TABLE}` gt
             LEFT JOIN (
@@ -153,10 +158,13 @@ def get_tickets(
 
 def get_ticket_detail(content_id: str) -> dict:
     _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
-    _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
     _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
     _optional_except = ["difficulty", "team_comment_replied"]
     _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
+    _reopen_clause = (
+        "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
+        "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
+    ) if "last_member_activity_at" in _gt_cols else ""
     sql = f"""
         SELECT
             gt.* EXCEPT({_except_cols}),
@@ -164,10 +172,9 @@ def get_ticket_detail(content_id: str) -> dict:
             tm.status                                               AS manual_status,
             COALESCE(tm.domain, gt.domain)                          AS domain,
             CASE
-                WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
+                {_reopen_clause}
                 WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
-                ELSE 'open'
+                ELSE gt.ticket_status
             END                                                     AS ticket_status,
             CASE
                 WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
@@ -191,10 +198,13 @@ def get_ticket_detail(content_id: str) -> dict:
 def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
     """All tickets from one member in one thread (all statuses), used by the group dialog."""
     _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
-    _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
     _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
     _optional_except = ["difficulty", "team_comment_replied"]
     _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
+    _reopen_clause = (
+        "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
+        "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
+    ) if "last_member_activity_at" in _gt_cols else ""
     sql = f"""
         WITH live AS (
             SELECT
@@ -203,10 +213,9 @@ def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
                 tm.status                                               AS manual_status,
                 COALESCE(tm.domain, gt.domain)                         AS domain,
                 CASE
-                    WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
+                    {_reopen_clause}
                     WHEN tm.status IS NOT NULL AND tm.status != ''     THEN tm.status
-                    WHEN gt.ticket_status = 'not_a_question'           THEN 'not_a_question'
-                    ELSE 'open'
+                    ELSE gt.ticket_status
                 END                                                    AS ticket_status,
                 CASE
                     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
@@ -398,6 +407,73 @@ def mn_promote_to_host(member_id: int, admin_api_key: str) -> dict:
     raise RuntimeError(f"HTTP {response.status_code} — {detail}")
 
 
+def get_upcoming_events() -> list[dict]:
+    """Return upcoming RSVP-enabled events from BQ, ordered by start time."""
+    sql = f"""
+        SELECT event_id, title, starts_at, ends_at, time_zone,
+               event_type, zoom_link, permalink
+        FROM `{config.PROJECT_ID}.grant_helpdesk.upcoming_events`
+        WHERE starts_at > CURRENT_TIMESTAMP()
+        ORDER BY starts_at ASC
+    """
+    df = client.query(sql).to_dataframe()
+    return df.to_dict("records")
+
+
+def rsvp_member_to_event(event_id: int, member_id: str, api_key: str) -> None:
+    """RSVP a member to a Mighty Networks event via the Admin API."""
+    import requests as _requests
+    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/events/{event_id}/rsvps"
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+        "User-Agent":    "mn-api-client/1.0",
+    }
+    response = _requests.post(url, headers=headers, json={"member_id": int(member_id), "status": "going"}, timeout=30)
+    if response.status_code in (200, 201, 204):
+        return
+    try:
+        detail = response.json()
+    except Exception:
+        detail = response.text
+    raise RuntimeError(f"HTTP {response.status_code} — {detail}")
+
+
+def log_rsvp(content_id: str, event_id: int, member_id: str, rsvped_by: str) -> None:
+    """Log an RSVP action to BQ."""
+    row = [{
+        "id":         str(uuid.uuid4()),
+        "content_id": content_id,
+        "event_id":   event_id,
+        "member_id":  str(member_id),
+        "rsvped_by":  rsvped_by or "",
+        "rsvped_at":  datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }]
+    errors = client.insert_rows_json(f"{config.PROJECT_ID}.grant_helpdesk.rsvp_log", row)
+    if errors:
+        raise RuntimeError(f"BQ log error: {errors}")
+
+
+def delete_mn_post(post_id: str, api_key: str) -> None:
+    """Delete a post from Mighty Networks via the Admin API."""
+    import requests as _requests
+    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/posts/{int(post_id)}"
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Accept":        "application/json",
+        "User-Agent":    "mn-api-client/1.0",
+    }
+    response = _requests.delete(url, headers=headers, timeout=30)
+    if response.status_code in (200, 204):
+        return
+    try:
+        detail = response.json()
+    except Exception:
+        detail = response.text
+    raise RuntimeError(f"HTTP {response.status_code} — {detail}")
+
+
 def post_mn_comment(post_id: str, body: str, api_key: str, reply_to_id: int = None) -> dict:
     """Post a comment to Mighty Networks via the API. Returns the created comment dict."""
     import requests as _requests
@@ -421,16 +497,85 @@ def post_mn_comment(post_id: str, body: str, api_key: str, reply_to_id: int = No
     raise RuntimeError(f"HTTP {response.status_code} — {detail}")
 
 
+def queue_followup(
+    ticket_id: str,
+    content_id: str,
+    content_type: str,
+    member_id: str,
+    member_name: str,
+    message: str,
+    days: int,
+    scheduled_by: str,
+) -> None:
+    """Insert a pending follow-up into the followup_queue table."""
+    now = datetime.datetime.utcnow()
+    send_after = now + datetime.timedelta(days=int(days))
+    row = [{
+        "id":            str(uuid.uuid4()),
+        "ticket_id":     ticket_id,
+        "content_id":    content_id,
+        "content_type":  content_type,
+        "member_id":     str(member_id) if member_id else "",
+        "member_name":   member_name or "",
+        "message":       message,
+        "send_after":    send_after.isoformat(),
+        "status":        "pending",
+        "scheduled_by":  scheduled_by,
+        "created_at":    now.isoformat(),
+    }]
+    errors = client.insert_rows_json(config.FOLLOWUP_QUEUE_TABLE, row)
+    if errors:
+        raise RuntimeError(f"BQ insert errors: {errors}")
+
+
+def get_followup_statuses(content_ids: list) -> dict:
+    """Return {ticket_id: {status, send_after, sent_at}} for any tickets with a follow-up queued."""
+    if not content_ids:
+        return {}
+    ids_str = ", ".join(f"'{c}'" for c in content_ids)
+    sql = f"""
+        SELECT ticket_id, status, send_after, sent_at
+        FROM `{config.FOLLOWUP_QUEUE_TABLE}`
+        WHERE ticket_id IN ({ids_str})
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY ticket_id ORDER BY created_at DESC) = 1
+    """
+    df = client.query(sql).to_dataframe()
+    return {str(r["ticket_id"]): r.to_dict() for _, r in df.iterrows()}
+
+
+def update_followup_status(followup_id: str, status: str, **kwargs) -> None:
+    """Update a followup_queue row. kwargs: sent_at, skipped_at, skipped_reason."""
+    sets = [f"status = '{status}'"]
+    if "sent_at" in kwargs:
+        sets.append(f"sent_at = TIMESTAMP '{kwargs['sent_at']}'")
+    if "skipped_at" in kwargs:
+        sets.append(f"skipped_at = TIMESTAMP '{kwargs['skipped_at']}'")
+    if "skipped_reason" in kwargs:
+        reason = (kwargs["skipped_reason"] or "").replace("'", "\\'")
+        sets.append(f"skipped_reason = '{reason}'")
+    sql = f"""
+        UPDATE `{config.FOLLOWUP_QUEUE_TABLE}`
+        SET {', '.join(sets)}
+        WHERE id = '{followup_id}'
+    """
+    client.query(sql).result()
+
+
 def update_ticket_meta(
     content_id: str,
     status: str,
     assigned_to: str,
     domain: str = None,
     feedback_reason: str = None,
+    closed_by: str = None,
 ):
     now        = datetime.datetime.utcnow().isoformat()
     domain_val = domain or ""
     reason_val = (feedback_reason or "").replace("'", "\\'")
+    closed_by_val = (closed_by or "").replace("'", "\\'")
+    # Write closed_at timestamp when closing; clear it when reopening or changing status
+    closed_at_sql = f"TIMESTAMP '{now}'" if status == "closed" else "NULL"
+    closed_by_sql = f"'{closed_by_val}'" if status == "closed" and closed_by_val else "NULL"
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
@@ -440,7 +585,9 @@ def update_ticket_meta(
                 '{assigned_to}'    AS assigned_to,
                 '{domain_val}'     AS domain,
                 '{reason_val}'     AS feedback_reason,
-                TIMESTAMP '{now}'  AS updated_at
+                TIMESTAMP '{now}'  AS updated_at,
+                {closed_at_sql}    AS closed_at,
+                {closed_by_sql}    AS closed_by
         ) S
         ON T.content_id = S.content_id
         WHEN MATCHED THEN UPDATE SET
@@ -448,11 +595,13 @@ def update_ticket_meta(
             assigned_to     = S.assigned_to,
             domain          = S.domain,
             feedback_reason = S.feedback_reason,
-            updated_at      = S.updated_at
+            updated_at      = S.updated_at,
+            closed_at       = S.closed_at,
+            closed_by       = S.closed_by
         WHEN NOT MATCHED THEN INSERT
-            (content_id, status, assigned_to, domain, feedback_reason, updated_at)
+            (content_id, status, assigned_to, domain, feedback_reason, updated_at, closed_at, closed_by)
         VALUES
-            (S.content_id, S.status, S.assigned_to, S.domain, S.feedback_reason, S.updated_at)
+            (S.content_id, S.status, S.assigned_to, S.domain, S.feedback_reason, S.updated_at, S.closed_at, S.closed_by)
     """
     client.query(sql).result()
     if assigned_to:
@@ -633,29 +782,29 @@ def get_classification_feedback(date_from: str, date_to: str) -> pd.DataFrame:
     return client.query(sql).to_dataframe()
 
 
-def _live_status_cte() -> tuple[str, str]:
+def _live_status_cte() -> str:
     """
-    Returns (except_cols, team_replied_sql) for building the live-join CTE
-    that re-applies ticket_metadata on top of the materialized grant_tickets table.
+    Returns the reopen_clause string for building the live-join CTE status CASE.
     Used by both get_open_stats() and get_daily_stats() so their KPI numbers
     always match the ticket list (which also uses a live join).
     """
     _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
-    _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
-    return _team_replied_sql
+    return (
+        "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
+        "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
+    ) if "last_member_activity_at" in _gt_cols else ""
 
 
 def get_open_stats() -> dict:
-    _team_replied_sql = _live_status_cte()
+    _reopen_clause = _live_status_cte()
     sql = f"""
         WITH live AS (
             SELECT
                 gt.created_at,
                 CASE
-                    WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
+                    {_reopen_clause}
                     WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                    WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
-                    ELSE 'open'
+                    ELSE gt.ticket_status
                 END AS ticket_status
             FROM `{config.TICKETS_TABLE}` gt
             LEFT JOIN (
@@ -679,7 +828,7 @@ def get_open_stats() -> dict:
 
 
 def get_daily_stats() -> dict:
-    _team_replied_sql = _live_status_cte()
+    _reopen_clause = _live_status_cte()
     sql = f"""
         WITH live AS (
             SELECT
@@ -687,10 +836,9 @@ def get_daily_stats() -> dict:
                 gt.first_engagement_at,
                 COALESCE(tm.updated_at, gt.ticket_updated_at) AS ticket_updated_at,
                 CASE
-                    WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
+                    {_reopen_clause}
                     WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                    WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
-                    ELSE 'open'
+                    ELSE gt.ticket_status
                 END AS ticket_status
             FROM `{config.TICKETS_TABLE}` gt
             LEFT JOIN (
