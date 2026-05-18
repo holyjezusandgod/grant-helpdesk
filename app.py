@@ -572,20 +572,20 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
         )
 
         # ── Follow-up scheduler ───────────────────────────────────────────────
-        _fu_msg, _fu_days = "", 7
-        _fu_enabled = st.checkbox(
-            "Schedule a follow-up question",
-            key=f"followup_cb_{content_id}",
+        _first_name = (_mem_name or "").split()[0] if (_mem_name or "").split() else "there"
+        _fu_default = (
+            f"Hi {_first_name}, just checking in — did everything get resolved? "
+            f"Feel free to reach out if there's anything else we can help with!"
         )
-        if _fu_enabled:
-            _first_name = (_mem_name or "").split()[0] or "there"
-            _fu_default = (
-                f"Hi {_first_name}, just checking in — did everything get resolved? "
-                f"Feel free to reach out if there's anything else we can help with!"
+        with st.expander("📅 Schedule a follow-up question (optional)"):
+            _fu_enabled = st.checkbox(
+                "Send follow-up automatically",
+                key=f"followup_cb_{content_id}",
+                value=False,
             )
             _fu_left, _fu_right = st.columns([5, 1])
             _fu_msg = _fu_left.text_area(
-                "Follow-up message",
+                "Message",
                 value=_fu_default,
                 key=f"followup_msg_{content_id}",
                 height=80,
@@ -593,8 +593,8 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
             _fu_days = _fu_right.number_input(
                 "Days", min_value=1, max_value=60, value=7,
                 key=f"followup_days_{content_id}",
+                help="Days to wait before sending",
             )
-            _fu_right.caption("days")
         # ─────────────────────────────────────────────────────────────────────
 
         _btn_post, _btn_close = st.columns([2, 1])
