@@ -4,8 +4,20 @@ config {
   description: "All member content (posts + articles + comments) before LLM classification. This is the input pool for grant_question_classifier."
 }
 
-SELECT * FROM ${ref("stg_grant_posts")}
+-- Posts and articles are always thread roots.
+-- Comments: only rank=1 (first comment from this member on this post) are thread roots.
+-- Rank>1 depth-1 comments and all depth-2 replies are thread continuations — not new tickets.
+
+SELECT content_id, thread_id, content_type, member_id, space_id, title, body, permalink, created_at, updated_at, last_activity_at
+FROM ${ref("stg_grant_posts")}
+
 UNION ALL
-SELECT * FROM ${ref("stg_grant_articles")}
+
+SELECT content_id, thread_id, content_type, member_id, space_id, title, body, permalink, created_at, updated_at, last_activity_at
+FROM ${ref("stg_grant_articles")}
+
 UNION ALL
-SELECT * FROM ${ref("stg_grant_member_comments")}
+
+SELECT content_id, thread_id, content_type, member_id, space_id, title, body, permalink, created_at, updated_at, last_activity_at
+FROM ${ref("stg_grant_member_comments")}
+WHERE member_thread_rank = 1

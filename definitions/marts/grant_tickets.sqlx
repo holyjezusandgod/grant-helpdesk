@@ -5,6 +5,30 @@ config {
   description: "Main view for the grant helpdesk dashboard. Status priority: (1) manual override from ticket_metadata, (2) team_commented → answered, (3) team_reacted → in_progress, (4) open."
 }
 
+-- All member activity per thread (includes depth-2 replies and rank>1 depth-1 comments from same member).
+-- Used to detect if a member replied after a thread was closed → triggers auto-reopen.
+-- Also drives the needs_attention flag (member replied after team engaged).
+WITH member_activity AS (
+  SELECT
+    CASE
+      WHEN cc.targetable_type = 'Post'    THEN CONCAT('post_',    CAST(cc.targetable_id AS STRING))
+      WHEN cc.targetable_type = 'Article' THEN CONCAT('article_', CAST(cc.targetable_id AS STRING))
+    END                AS thread_id,
+    cc.author_id       AS member_id,
+    MAX(cc.created_at) AS last_member_activity_at
+  FROM ${ref("core_comments")} cc
+  WHERE cc.client_id      = 'lesko_4022250'
+    AND cc.comment_status = 'active'
+    AND cc.author_id NOT IN (
+      SELECT member_id FROM ${ref("core_members")}
+      WHERE client_id = 'lesko_4022250' AND network_role IN ('host', 'moderator')
+    )
+    AND cc.author_id NOT IN (
+      SELECT member_id FROM ${ref("info_avatars")} WHERE client_id = 'lesko_4022250'
+    )
+  GROUP BY 1, 2
+)
+
 SELECT
   c.content_id,
   c.thread_id,
@@ -30,29 +54,38 @@ SELECT
   COALESCE(m.last_visited_network, cm.last_visited_network) AS last_visited_network,
   COALESCE(m.member_permalink,     cm.permalink)            AS member_permalink,
 
-  -- team engagement signals (failsafe)
+  -- team engagement signals (display only — no longer used to derive ticket_status)
   COALESCE(te.team_commented,        FALSE) AS team_commented,
   COALESCE(te.team_comment_replied,  FALSE) AS team_comment_replied,
   COALESCE(te.team_reacted,          FALSE) AS team_reacted,
   te.first_engagement_at,
 
-  -- final ticket status:
-  -- (1) team commented on post, replied to comment, or reacted → answered, cannot be overridden
-  -- (2) manual status set in Streamlit → use it
-  -- (3) classifier rejected → not_a_question
-  -- (4) nothing → open
-  CASE
-    WHEN te.team_commented       = TRUE
-      OR te.team_comment_replied = TRUE
-      OR te.team_reacted         = TRUE   THEN 'answered'
-    WHEN t.status IS NOT NULL             THEN t.status
-    WHEN c.is_question = FALSE            THEN 'not_a_question'
-    ELSE                                       'open'
-  END                                     AS ticket_status,
+  -- thread activity: latest member comment/reply across all depths
+  ma.last_member_activity_at,
 
-  t.status                             AS manual_status,
-  COALESCE(t.assigned_to, ma.assigned_to) AS assigned_to,
-  t.updated_at                         AS ticket_updated_at,
+  -- needs_attention: member replied after the team first engaged (thread may need follow-up)
+  COALESCE(ma.last_member_activity_at > te.first_engagement_at, FALSE) AS needs_attention,
+
+  -- ticket status — explicit coach actions only:
+  -- (1) closed but member replied since → auto-reopen
+  -- (2) closed and no new member activity → closed
+  -- (3) any other manual status → use it
+  -- (4) classifier rejected → not_a_question
+  -- (5) default → open
+  CASE
+    WHEN t.status = 'closed'
+     AND ma.last_member_activity_at > t.closed_at  THEN 'open'
+    WHEN t.status = 'closed'                        THEN 'closed'
+    WHEN t.status IS NOT NULL                       THEN t.status
+    WHEN c.is_question = FALSE                      THEN 'not_a_question'
+    ELSE                                                 'open'
+  END                                               AS ticket_status,
+
+  t.status                                          AS manual_status,
+  t.closed_at,
+  t.closed_by,
+  COALESCE(t.assigned_to, mas.assigned_to)          AS assigned_to,
+  t.updated_at                                      AS ticket_updated_at,
 
   -- AI-derived domain label; manual value in ticket_metadata takes precedence
   COALESCE(t.domain, ai.domain) AS domain
@@ -75,5 +108,9 @@ LEFT JOIN ${ref("ticket_metadata")} t
 LEFT JOIN ${ref("grant_ticket_labels")} ai
   ON c.content_id = ai.content_id
 
-LEFT JOIN ${ref("grant_member_assignments")} ma
-  ON c.member_id = ma.member_id
+LEFT JOIN ${ref("grant_member_assignments")} mas
+  ON c.member_id = mas.member_id
+
+LEFT JOIN member_activity ma
+  ON c.thread_id = ma.thread_id
+ AND c.member_id = ma.member_id

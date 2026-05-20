@@ -711,9 +711,10 @@ def update_ticket_meta(
     domain_val = domain or ""
     reason_val = (feedback_reason or "").replace("'", "\\'")
     closed_by_val = (closed_by or "").replace("'", "\\'")
-    # Write closed_at timestamp when closing; clear it when reopening or changing status
-    closed_at_sql = f"TIMESTAMP '{now}'" if status == "closed" else "NULL"
-    closed_by_sql = f"'{closed_by_val}'" if status == "closed" and closed_by_val else "NULL"
+    # Write closed_at timestamp when closing; clear it when reopening or changing status.
+    # CAST(NULL AS ...) is required — bare NULL in a MERGE USING clause has no type in BigQuery.
+    closed_at_sql = f"TIMESTAMP '{now}'" if status == "closed" else "CAST(NULL AS TIMESTAMP)"
+    closed_by_sql = f"'{closed_by_val}'" if status == "closed" and closed_by_val else "CAST(NULL AS STRING)"
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
@@ -774,13 +775,13 @@ def trigger_assignment_refresh():
             invocation_config=dataform_v1beta1.InvocationConfig(
                 included_targets=[
                     dataform_v1beta1.Target(
-                        project=config.PROJECT_ID,
-                        dataset=config.DATASET,
+                        database=config.PROJECT_ID,
+                        schema=config.DATASET,
                         name="grant_member_assignments",
                     ),
                     dataform_v1beta1.Target(
-                        project=config.PROJECT_ID,
-                        dataset=config.DATASET,
+                        database=config.PROJECT_ID,
+                        schema=config.DATASET,
                         name="grant_tickets",
                     ),
                 ],

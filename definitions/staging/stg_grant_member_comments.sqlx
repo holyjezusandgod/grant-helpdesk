@@ -21,7 +21,18 @@ SELECT
   permalink,
   created_at,
   updated_at,
-  created_at                                         AS last_activity_at
+  created_at                                         AS last_activity_at,
+
+  -- thread detection fields
+  depth,
+  reply_to_id,
+
+  -- rank 1 = first comment this member ever made on this post → thread root (ticket candidate)
+  -- rank > 1 = thread continuation (member already has a thread on this post)
+  ROW_NUMBER() OVER (
+    PARTITION BY author_id, targetable_id
+    ORDER BY created_at
+  )                                                  AS member_thread_rank
 
 FROM ${ref("core_comments")}
 
