@@ -19,14 +19,6 @@ except Exception as _e:
     )
     raise SystemExit(1) from _e
 
-# Cache tickets table schema at startup — avoids a get_table() API call on every
-# ticket detail/thread query. Falls back gracefully if the call fails.
-try:
-    _TICKETS_COLS: set[str] = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
-except Exception:
-    _TICKETS_COLS: set[str] = set()
-
-
 def log_event(level: str, source: str, message: str, detail: str = None):
     """Streaming-insert a log row into app_logs. Never raises — logging must not break the caller."""
     try:
@@ -41,6 +33,15 @@ def log_event(level: str, source: str, message: str, detail: str = None):
         client.insert_rows_json(config.LOGS_TABLE, row)
     except Exception:
         pass  # If BQ itself is down, nothing we can do here
+
+
+# Cache tickets table schema at startup — avoids a get_table() API call on every
+# ticket detail/thread query. Falls back gracefully if the call fails.
+try:
+    _TICKETS_COLS: set[str] = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+except Exception as _e:
+    _TICKETS_COLS: set[str] = set()
+    log_event("WARNING", "bq_client.startup", "Could not load tickets table schema — backward-compat column checks disabled", str(_e))
 
 
 def get_unreviewed_rejects(days: int = 1) -> pd.DataFrame:
@@ -539,8 +540,12 @@ def get_followup_statuses(content_ids: list) -> dict:
         WHERE ticket_id IN ({ids_str})
         QUALIFY ROW_NUMBER() OVER (PARTITION BY ticket_id ORDER BY created_at DESC) = 1
     """
-    df = client.query(sql).to_dataframe()
-    return {str(r["ticket_id"]): r.to_dict() for _, r in df.iterrows()}
+    try:
+        df = client.query(sql).to_dataframe()
+        return {str(r["ticket_id"]): r.to_dict() for _, r in df.iterrows()}
+    except Exception as e:
+        log_event("ERROR", "bq_client.get_followup_statuses", str(e))
+        return {}
 
 
 def update_followup_status(followup_id: str, status: str, **kwargs) -> None:
@@ -559,6 +564,139 @@ def update_followup_status(followup_id: str, status: str, **kwargs) -> None:
         WHERE id = '{followup_id}'
     """
     client.query(sql).result()
+
+
+def preview_bulk_close(
+    status_filter: str = "answered",
+    assigned_to: str = "",
+    before_date: str = "",
+) -> dict:
+    """
+    Returns {"will_close": N, "skipped_followup": M} for the given filters.
+    Excludes already-closed/cancelled tickets and those with pending follow-ups.
+    """
+    conditions = ["t.effective_status NOT IN ('closed', 'cancelled')"]
+    if status_filter:
+        safe_status = status_filter.replace("'", "")
+        conditions.append(f"t.effective_status = '{safe_status}'")
+    if assigned_to:
+        safe_assigned = assigned_to.replace("'", "\\'")
+        conditions.append(f"t.effective_assigned_to = '{safe_assigned}'")
+    if before_date:
+        safe_date = before_date.replace("'", "")
+        conditions.append(f"DATE(t.created_at) < '{safe_date}'")
+
+    where = "WHERE " + " AND ".join(conditions)
+
+    sql = f"""
+        WITH base AS (
+            SELECT
+                gt.content_id,
+                gt.created_at,
+                CASE
+                    WHEN tm.status IS NOT NULL AND tm.status != '' THEN tm.status
+                    ELSE gt.ticket_status
+                END AS effective_status,
+                COALESCE(tm.assigned_to, gt.assigned_to) AS effective_assigned_to
+            FROM `{config.TICKETS_TABLE}` gt
+            LEFT JOIN (
+                SELECT * FROM `{config.META_TABLE}`
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+            ) tm ON gt.content_id = tm.content_id
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+        ),
+        filtered AS (
+            SELECT t.content_id
+            FROM base t
+            {where}
+        )
+        SELECT
+            COUNT(*) AS total,
+            COUNTIF(fq.ticket_id IS NOT NULL) AS skipped_followup
+        FROM filtered f
+        LEFT JOIN (
+            SELECT DISTINCT ticket_id
+            FROM `{config.FOLLOWUP_QUEUE_TABLE}`
+            WHERE status = 'pending'
+        ) fq ON f.content_id = fq.ticket_id
+    """
+    row = list(client.query(sql).result())[0]
+    total        = int(row["total"])
+    skipped      = int(row["skipped_followup"])
+    return {"will_close": total - skipped, "skipped_followup": skipped}
+
+
+def execute_bulk_close(
+    status_filter: str = "answered",
+    assigned_to: str = "",
+    before_date: str = "",
+    closed_by: str = "",
+) -> int:
+    """
+    Closes all matching tickets, skipping those with pending follow-ups.
+    Returns the number of tickets closed.
+    """
+    now = datetime.datetime.utcnow().isoformat()
+    closed_by_val = (closed_by or "").replace("'", "\\'")
+
+    conditions = ["t.effective_status NOT IN ('closed', 'cancelled')"]
+    if status_filter:
+        safe_status = status_filter.replace("'", "")
+        conditions.append(f"t.effective_status = '{safe_status}'")
+    if assigned_to:
+        safe_assigned = assigned_to.replace("'", "\\'")
+        conditions.append(f"t.effective_assigned_to = '{safe_assigned}'")
+    if before_date:
+        safe_date = before_date.replace("'", "")
+        conditions.append(f"DATE(t.created_at) < '{safe_date}'")
+
+    where = "WHERE " + " AND ".join(conditions)
+
+    sql = f"""
+        MERGE `{config.META_TABLE}` T
+        USING (
+            WITH base AS (
+                SELECT
+                    gt.content_id,
+                    gt.created_at,
+                    COALESCE(tm.assigned_to, gt.assigned_to) AS assigned_to,
+                    COALESCE(tm.domain, gt.domain)           AS domain,
+                    CASE
+                        WHEN tm.status IS NOT NULL AND tm.status != '' THEN tm.status
+                        ELSE gt.ticket_status
+                    END AS effective_status,
+                    COALESCE(tm.assigned_to, gt.assigned_to) AS effective_assigned_to
+                FROM `{config.TICKETS_TABLE}` gt
+                LEFT JOIN (
+                    SELECT * FROM `{config.META_TABLE}`
+                    QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+                ) tm ON gt.content_id = tm.content_id
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+            )
+            SELECT t.content_id, t.assigned_to, t.domain
+            FROM base t
+            {where}
+            AND t.content_id NOT IN (
+                SELECT DISTINCT ticket_id
+                FROM `{config.FOLLOWUP_QUEUE_TABLE}`
+                WHERE status = 'pending'
+            )
+        ) S
+        ON T.content_id = S.content_id
+        WHEN MATCHED THEN UPDATE SET
+            status     = 'closed',
+            updated_at = TIMESTAMP '{now}',
+            closed_at  = TIMESTAMP '{now}',
+            closed_by  = '{closed_by_val}'
+        WHEN NOT MATCHED THEN INSERT
+            (content_id, status, assigned_to, domain, updated_at, closed_at, closed_by)
+        VALUES
+            (S.content_id, 'closed', S.assigned_to, S.domain,
+             TIMESTAMP '{now}', TIMESTAMP '{now}', '{closed_by_val}')
+    """
+    job = client.query(sql)
+    job.result()
+    return job.num_dml_affected_rows or 0
 
 
 def update_ticket_meta(
@@ -1077,3 +1215,16 @@ def reply_team_feedback(feedback_id: str, reply_text: str, replied_by: str, new_
         WHERE feedback_id = '{feedback_id}'
     """
     client.query(sql).result()
+
+
+def get_app_logs(limit: int = 100, level: str = None) -> pd.DataFrame:
+    """Return recent rows from app_logs, optionally filtered by level (ERROR, WARNING, INFO)."""
+    level_filter = f"AND level = '{level}'" if level else ""
+    sql = f"""
+        SELECT created_at, level, source, message, detail
+        FROM `{config.LOGS_TABLE}`
+        WHERE 1=1 {level_filter}
+        ORDER BY created_at DESC
+        LIMIT {int(limit)}
+    """
+    return client.query(sql).to_dataframe()

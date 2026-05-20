@@ -189,8 +189,9 @@ if current_user and current_user not in _ADMIN_EMAILS:
     if "_coach_verified" not in st.session_state:
         try:
             st.session_state._coach_verified = _is_known_coach(current_user)
-        except Exception:
+        except Exception as _e:
             st.session_state._coach_verified = False
+            bq_client.log_event("ERROR", "app.coach_verification", f"Could not verify coach login for {current_user}", str(_e))
 
     if not st.session_state._coach_verified:
         st.markdown(f"""
@@ -252,6 +253,8 @@ if "show_kpis" not in st.session_state:
     st.session_state.show_kpis = True
 if "_pending_action" not in st.session_state:
     st.session_state._pending_action = None  # {"action", "content_id", "row"}
+if "_bc_preview" not in st.session_state:
+    st.session_state._bc_preview = None
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
 
@@ -469,8 +472,9 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
             _fut_thread = _executor.submit(_cached_thread, _hint)
             try:
                 thread = _fut_thread.result(timeout=15)
-            except Exception:
+            except Exception as _e:
                 thread = pd.DataFrame()   # graceful fallback — show ticket without thread
+                bq_client.log_event("WARNING", "app.show_ticket_dialog", f"Thread load failed for {thread_id}", str(_e))
 
     # ── Render ─────────────────────────────────────────────────────────────────
     status_icon  = STATUS_ICON.get(ticket.get("ticket_status"), "⚪")
@@ -1311,6 +1315,55 @@ with tab_main:
         b2.markdown(kpi_card(f"Answered today (from {total_open:,} open)", answered_today),                  unsafe_allow_html=True)
         b3.markdown(kpi_card("Daily avg (30d)",                            daily_stats.get("daily_avg", 0)), unsafe_allow_html=True)
 
+    # ── Bulk Close ────────────────────────────────────────────────────────────
+    with st.expander("🗂️ Bulk Close Tickets"):
+        st.caption("Close multiple tickets at once. Tickets with a pending follow-up question are always skipped.")
+        _bc_c1, _bc_c2, _bc_c3 = st.columns(3)
+        _bc_status = _bc_c1.selectbox(
+            "Status", ["answered", "open", "flagged", "— any open status —"],
+            key="bc_status",
+        )
+        _bc_coach = _bc_c2.selectbox(
+            "Grant coach", ["— all coaches —"] + team_members,
+            key="bc_coach",
+        )
+        _bc_before = _bc_c3.date_input(
+            "Created before", value=None, key="bc_before",
+            help="Leave blank to include all dates",
+        )
+
+        _bc_status_val  = "" if _bc_status  == "— any open status —" else _bc_status
+        _bc_coach_val   = "" if _bc_coach   == "— all coaches —"     else _bc_coach
+        _bc_before_val  = str(_bc_before) if _bc_before else ""
+
+        _bc_prev_col, _bc_go_col = st.columns([2, 1])
+        if _bc_prev_col.button("Preview", key="bc_preview"):
+            with st.spinner("Counting…"):
+                _bc_result = bq_client.preview_bulk_close(
+                    status_filter=_bc_status_val,
+                    assigned_to=_bc_coach_val,
+                    before_date=_bc_before_val,
+                )
+            st.session_state._bc_preview = _bc_result
+
+        if st.session_state.get("_bc_preview"):
+            _p = st.session_state._bc_preview
+            _skip_note = f" — {_p['skipped_followup']} skipped (follow-up pending)" if _p["skipped_followup"] else ""
+            st.info(f"**{_p['will_close']} ticket(s) will be closed**{_skip_note}")
+            if _p["will_close"] > 0:
+                if _bc_go_col.button(f"✅ Close {_p['will_close']} tickets", key="bc_execute", type="primary"):
+                    with st.spinner("Closing tickets…"):
+                        _bc_closed = bq_client.execute_bulk_close(
+                            status_filter=_bc_status_val,
+                            assigned_to=_bc_coach_val,
+                            before_date=_bc_before_val,
+                            closed_by=current_user or "",
+                        )
+                    st.session_state._bc_preview = None
+                    st.cache_data.clear()
+                    st.success(f"Closed {_bc_closed} tickets.")
+                    st.rerun()
+
     # ── Ticket list ───────────────────────────────────────────────────────────
     # Count unique member+thread groups — this is what the user actually sees,
     # not raw ticket rows (multiple comments from one member in one thread = 1 row).
@@ -1709,6 +1762,49 @@ with tab_admin:
                 del st.session_state["invite_name"]
                 st.rerun()
         _invite_dialog()
+
+    # ── Error Log ─────────────────────────────────────────────────────────────
+    st.divider()
+    _el_col1, _el_col2, _el_col3 = st.columns([3, 2, 1])
+    _el_col1.subheader("🔴 Error Log")
+    _el_level = _el_col2.selectbox(
+        "Level", ["All", "ERROR", "WARNING", "INFO"],
+        index=0, key="error_log_level", label_visibility="collapsed"
+    )
+    _el_refresh = _el_col3.button("↺ Refresh", key="error_log_refresh", use_container_width=True)
+
+    @st.cache_data(ttl=60, show_spinner=False)
+    def load_app_logs(level_filter: str):
+        lvl = None if level_filter == "All" else level_filter
+        return bq_client.get_app_logs(limit=100, level=lvl)
+
+    if _el_refresh:
+        load_app_logs.clear()
+
+    _log_df = load_app_logs(_el_level)
+
+    if _log_df.empty:
+        st.info("No log entries found.")
+    else:
+        _LEVEL_COLOR = {"ERROR": "#8a1f1f", "WARNING": "#7a5f00", "INFO": "#1f4f8a"}
+        _LEVEL_BG    = {"ERROR": "#fde0e0", "WARNING": "#fdf3d4", "INFO": "#ddeeff"}
+        for _, row in _log_df.iterrows():
+            _lvl = str(row.get("level") or "INFO")
+            _fg  = _LEVEL_COLOR.get(_lvl, "#333")
+            _bg  = _LEVEL_BG.get(_lvl, "#f5f5f5")
+            _ts  = str(row.get("created_at", ""))[:19].replace("T", " ")
+            _src = str(row.get("source") or "")
+            _msg = str(row.get("message") or "")
+            _det = str(row.get("detail") or "")
+            st.markdown(f"""
+<div style="background:{_bg};border-left:4px solid {_fg};border-radius:6px;
+            padding:8px 12px;margin-bottom:6px;font-size:0.82rem;line-height:1.5">
+  <span style="color:{_fg};font-weight:700">{_lvl}</span>
+  <span style="color:#888;margin-left:10px">{_ts}</span>
+  <span style="color:#555;margin-left:10px;font-family:monospace">{_src}</span>
+  <div style="color:#222;margin-top:3px">{_msg}</div>
+  {f'<div style="color:#888;font-size:0.78rem;margin-top:2px;white-space:pre-wrap">{_det[:300]}</div>' if _det and _det != "None" else ""}
+</div>""", unsafe_allow_html=True)
 
 
 # ── INBOX TAB ─────────────────────────────────────────────────────────────────
