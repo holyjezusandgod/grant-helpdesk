@@ -342,14 +342,17 @@ def save_mn_api_key(email: str, api_key: str):
 def search_members(query: str, limit: int = 20) -> pd.DataFrame:
     """Search community members by name or email.
     Pass query='' to load all active members (used for in-memory search cache)."""
-    q = query.replace("'", "\\'")
-    where_search = (
-        f"""AND (
-              LOWER(CONCAT(COALESCE(m.first_name,''), ' ', COALESCE(m.last_name,''))) LIKE LOWER('%{q}%')
-              OR LOWER(m.email_address) LIKE LOWER('%{q}%')
+    q = (query or "").strip()
+    params = [bigquery.ScalarQueryParameter("limit", "INT64", int(limit))]
+    where_search = ""
+    if q:
+        where_search = """AND (
+              LOWER(CONCAT(COALESCE(m.first_name,''), ' ', COALESCE(m.last_name,''))) LIKE @pattern
+              OR LOWER(m.email_address) LIKE @pattern
           )"""
-        if q else ""
-    )
+        params.append(
+            bigquery.ScalarQueryParameter("pattern", "STRING", f"%{q.lower()}%")
+        )
     sql = f"""
         SELECT
             m.member_id,
@@ -362,9 +365,10 @@ def search_members(query: str, limit: int = 20) -> pd.DataFrame:
           AND LOWER(m.member_status) = 'active'
           {where_search}
         ORDER BY m.last_name, m.first_name
-        LIMIT {limit}
+        LIMIT @limit
     """
-    return client.query(sql).to_dataframe()
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    return client.query(sql, job_config=job_config).to_dataframe()
 
 
 def get_grant_coaches() -> pd.DataFrame:
