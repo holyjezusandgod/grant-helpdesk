@@ -630,7 +630,9 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
                         )
                     st.session_state._status_overrides[content_id] = "answered"
                     st.session_state.pop(f"answer_{content_id}", None)
-                    st.cache_data.clear()
+                    load_tickets.clear()
+                    load_open_stats.clear()
+                    load_daily_stats.clear()
                     st.success("Answer posted to Mighty Networks." + (" Follow-up scheduled." if _fu_enabled else ""))
                 except Exception as e:
                     st.error(f"Failed to post: {e}")
@@ -654,7 +656,9 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
                         )
                     st.session_state._status_overrides[content_id] = "closed"
                     st.session_state.pop(f"answer_{content_id}", None)
-                    st.cache_data.clear()
+                    load_tickets.clear()
+                    load_open_stats.clear()
+                    load_daily_stats.clear()
                     _thread_link = ticket.get("permalink") or ""
                     if _new_comment_id and _post_id:
                         _thread_link = (
@@ -837,7 +841,9 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
             _dv = "" if bulk_domain == "— unset —"      else bulk_domain
             for _, t in open_tix.iterrows():
                 bq_client.update_ticket_meta(t["content_id"], bulk_status, _av, _dv)
-            st.cache_data.clear()
+            load_tickets.clear()
+            load_open_stats.clear()
+            load_daily_stats.clear()
             st.success(f"Saved {len(open_tix)} comments.")
 
         st.divider()
@@ -914,7 +920,9 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
                 if st.button("💾 Save this comment", key=f"ov_save_{t['content_id']}"):
                     _av2 = "" if ov_coach == "— unassigned —" else ov_coach
                     bq_client.update_ticket_meta(t["content_id"], ov_status, _av2, "")
-                    st.cache_data.clear()
+                    load_tickets.clear()
+                    load_open_stats.clear()
+                    load_daily_stats.clear()
                     st.success("Saved.")
 
     # ── Done comments (grayed out) ────────────────────────────────────────────
@@ -1017,7 +1025,9 @@ def show_assign_dialog(content_id: str, row_dict: dict):
             _av,
             row_dict.get("domain") or "",
         )
-        st.cache_data.clear()
+        load_tickets.clear()
+        load_open_stats.clear()
+        load_daily_stats.clear()
         st.rerun()
 
 
@@ -1387,7 +1397,9 @@ with tab_main:
                             closed_by=current_user or "",
                         )
                     st.session_state._bc_preview = None
-                    st.cache_data.clear()
+                    load_tickets.clear()
+                    load_open_stats.clear()
+                    load_daily_stats.clear()
                     st.success(f"Closed {_bc_closed} tickets.")
                     st.rerun()
 
