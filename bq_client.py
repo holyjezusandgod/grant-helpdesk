@@ -35,13 +35,54 @@ def log_event(level: str, source: str, message: str, detail: str = None):
         pass  # If BQ itself is down, nothing we can do here
 
 
-# Cache tickets table schema at startup — avoids a get_table() API call on every
-# ticket detail/thread query. Falls back gracefully if the call fails.
-try:
-    _TICKETS_COLS: set[str] = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
-except Exception as _e:
-    _TICKETS_COLS: set[str] = set()
-    log_event("WARNING", "bq_client.startup", "Could not load tickets table schema — backward-compat column checks disabled", str(_e))
+import time as _time
+
+# Cache tickets table schema with a 5-minute TTL. A one-shot module-load cache
+# strands long-running containers with a stale schema view when Dataform rebuilds
+# the table (a column added/removed in the mart was invisible to the running app
+# until redeploy).
+_TICKETS_COLS_CACHE: dict = {"cols": None, "expires_at": 0.0}
+_TICKETS_COLS_TTL_SEC = 300
+
+
+def _tickets_cols() -> set[str]:
+    now = _time.time()
+    cached = _TICKETS_COLS_CACHE["cols"]
+    if cached is not None and _TICKETS_COLS_CACHE["expires_at"] > now:
+        return cached
+    try:
+        cols = {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    except Exception as _e:
+        log_event("WARNING", "bq_client._tickets_cols", "Could not refresh tickets table schema", str(_e))
+        cols = cached if cached is not None else set()
+    _TICKETS_COLS_CACHE["cols"] = cols
+    _TICKETS_COLS_CACHE["expires_at"] = now + _TICKETS_COLS_TTL_SEC
+    return cols
+
+
+def _invalidate_tickets_cols() -> None:
+    _TICKETS_COLS_CACHE["expires_at"] = 0.0
+
+
+def _query_with_schema_retry(build_sql):
+    """
+    Run build_sql() → client.query → to_dataframe, with one retry on
+    "Name X not found inside gt" errors. The retry forces _tickets_cols()
+    to re-fetch from BigQuery before build_sql is called again, so SQL
+    built around an optional column will adjust to the current schema.
+    Used to survive transient mid-Dataform-rebuild races.
+    """
+    from google.api_core.exceptions import BadRequest
+    try:
+        return client.query(build_sql()).to_dataframe()
+    except BadRequest as _e:
+        if "not found inside" not in str(_e):
+            raise
+        log_event("WARNING", "bq_client._query_with_schema_retry",
+                  "Schema/SQL mismatch — refreshing _tickets_cols and retrying", str(_e))
+        _invalidate_tickets_cols()
+        _tickets_cols()  # repopulate
+        return client.query(build_sql()).to_dataframe()
 
 
 def get_unreviewed_rejects(days: int = 1) -> pd.DataFrame:
@@ -108,20 +149,66 @@ def get_tickets(
 
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
 
-    # Build EXCEPT and CASE clauses based on what columns actually exist in the table.
-    # This makes the query forward/backward compatible as Dataform rebuilds the schema.
-    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
-    _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
-    _optional_except = ["difficulty", "team_comment_replied"]
-    _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
-    # Reopen clause: activates once grant_tickets has last_member_activity_at (post Dataform rebuild)
-    _reopen_clause = (
-        "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
-        "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
-    ) if "last_member_activity_at" in _gt_cols else ""
+    def _build():
+        # Build EXCEPT and CASE clauses based on what columns actually exist in
+        # the table. Run inside _query_with_schema_retry so a mid-Dataform-
+        # rebuild schema mismatch refreshes _tickets_cols() and tries again.
+        _gt_cols = _tickets_cols()
+        _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
+        _optional_except = ["difficulty", "team_comment_replied"]
+        _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
+        _reopen_clause = (
+            "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
+            "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
+        ) if "last_member_activity_at" in _gt_cols else ""
+        return f"""
+            WITH live AS (
+                SELECT
+                    gt.* EXCEPT({_except_cols}),
+                    COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
+                    tm.status                                               AS manual_status,
+                    COALESCE(tm.domain, gt.domain)                          AS domain,
+                    CASE
+                        {_reopen_clause}
+                        WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
+                        ELSE gt.ticket_status
+                    END                                                     AS ticket_status
+                FROM `{config.TICKETS_TABLE}` gt
+                LEFT JOIN (
+                    SELECT * FROM `{config.META_TABLE}`
+                    QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+                ) tm ON gt.content_id = tm.content_id
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+            )
+            SELECT
+                *,
+                LEFT(body, 600) AS body_preview,
+                CASE
+                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24 THEN 'normal'
+                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 48 THEN 'urgent'
+                    ELSE 'critical'
+                END AS urgency
+            FROM live
+            {where}
+            ORDER BY created_at DESC
+        """
+    df = _query_with_schema_retry(_build)
+    if "domain" not in df.columns:
+        df["domain"] = None
+    return df
 
-    sql = f"""
-        WITH live AS (
+
+def get_ticket_detail(content_id: str) -> dict:
+    def _build():
+        _gt_cols = _tickets_cols()
+        _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
+        _optional_except = ["difficulty", "team_comment_replied"]
+        _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
+        _reopen_clause = (
+            "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
+            "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
+        ) if "last_member_activity_at" in _gt_cols else ""
+        return f"""
             SELECT
                 gt.* EXCEPT({_except_cols}),
                 COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
@@ -131,93 +218,7 @@ def get_tickets(
                     {_reopen_clause}
                     WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                     ELSE gt.ticket_status
-                END                                                     AS ticket_status
-            FROM `{config.TICKETS_TABLE}` gt
-            LEFT JOIN (
-                SELECT * FROM `{config.META_TABLE}`
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
-            ) tm ON gt.content_id = tm.content_id
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
-        )
-        SELECT
-            *,
-            LEFT(body, 600) AS body_preview,
-            CASE
-                WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24 THEN 'normal'
-                WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 48 THEN 'urgent'
-                ELSE 'critical'
-            END AS urgency
-        FROM live
-        {where}
-        ORDER BY created_at DESC
-    """
-    df = client.query(sql).to_dataframe()
-    if "domain" not in df.columns:
-        df["domain"] = None
-    return df
-
-
-def get_ticket_detail(content_id: str) -> dict:
-    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
-    _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
-    _optional_except = ["difficulty", "team_comment_replied"]
-    _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
-    _reopen_clause = (
-        "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
-        "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
-    ) if "last_member_activity_at" in _gt_cols else ""
-    sql = f"""
-        SELECT
-            gt.* EXCEPT({_except_cols}),
-            COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
-            tm.status                                               AS manual_status,
-            COALESCE(tm.domain, gt.domain)                          AS domain,
-            CASE
-                {_reopen_clause}
-                WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                ELSE gt.ticket_status
-            END                                                     AS ticket_status,
-            CASE
-                WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
-                WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 48 THEN 'urgent'
-                ELSE 'critical'
-            END AS urgency
-        FROM `{config.TICKETS_TABLE}` gt
-        LEFT JOIN (
-            SELECT * FROM `{config.META_TABLE}`
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
-        ) tm ON gt.content_id = tm.content_id
-        WHERE gt.content_id = '{content_id}'
-        LIMIT 1
-    """
-    df = client.query(sql).to_dataframe()
-    if df.empty:
-        return {}
-    return df.iloc[0].to_dict()
-
-
-def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
-    """All tickets from one member in one thread (all statuses), used by the group dialog."""
-    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
-    _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
-    _optional_except = ["difficulty", "team_comment_replied"]
-    _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
-    _reopen_clause = (
-        "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
-        "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
-    ) if "last_member_activity_at" in _gt_cols else ""
-    sql = f"""
-        WITH live AS (
-            SELECT
-                gt.* EXCEPT({_except_cols}),
-                COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
-                tm.status                                               AS manual_status,
-                COALESCE(tm.domain, gt.domain)                         AS domain,
-                CASE
-                    {_reopen_clause}
-                    WHEN tm.status IS NOT NULL AND tm.status != ''     THEN tm.status
-                    ELSE gt.ticket_status
-                END                                                    AS ticket_status,
+                END                                                     AS ticket_status,
                 CASE
                     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
                     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 48 THEN 'urgent'
@@ -228,15 +229,57 @@ def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
                 SELECT * FROM `{config.META_TABLE}`
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
             ) tm ON gt.content_id = tm.content_id
-            WHERE gt.thread_id = '{thread_id}'
-              AND CAST(gt.member_id AS STRING) = '{member_id}'
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
-        )
-        SELECT *, LEFT(body, 300) AS body_preview
-        FROM live
-        ORDER BY created_at ASC
-    """
-    df = client.query(sql).to_dataframe()
+            WHERE gt.content_id = '{content_id}'
+            LIMIT 1
+        """
+    df = _query_with_schema_retry(_build)
+    if df.empty:
+        return {}
+    return df.iloc[0].to_dict()
+
+
+def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
+    """All tickets from one member in one thread (all statuses), used by the group dialog."""
+    def _build():
+        _gt_cols = _tickets_cols()
+        _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
+        _optional_except = ["difficulty", "team_comment_replied"]
+        _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
+        _reopen_clause = (
+            "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
+            "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
+        ) if "last_member_activity_at" in _gt_cols else ""
+        return f"""
+            WITH live AS (
+                SELECT
+                    gt.* EXCEPT({_except_cols}),
+                    COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
+                    tm.status                                               AS manual_status,
+                    COALESCE(tm.domain, gt.domain)                         AS domain,
+                    CASE
+                        {_reopen_clause}
+                        WHEN tm.status IS NOT NULL AND tm.status != ''     THEN tm.status
+                        ELSE gt.ticket_status
+                    END                                                    AS ticket_status,
+                    CASE
+                        WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
+                        WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 48 THEN 'urgent'
+                        ELSE 'critical'
+                    END AS urgency
+                FROM `{config.TICKETS_TABLE}` gt
+                LEFT JOIN (
+                    SELECT * FROM `{config.META_TABLE}`
+                    QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+                ) tm ON gt.content_id = tm.content_id
+                WHERE gt.thread_id = '{thread_id}'
+                  AND CAST(gt.member_id AS STRING) = '{member_id}'
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+            )
+            SELECT *, LEFT(body, 300) AS body_preview
+            FROM live
+            ORDER BY created_at ASC
+        """
+    df = _query_with_schema_retry(_build)
     if "domain" not in df.columns:
         df["domain"] = None
     return df
@@ -459,7 +502,11 @@ def log_rsvp(content_id: str, event_id: int, member_id: str, rsvped_by: str) -> 
 def delete_mn_post(post_id: str, api_key: str) -> None:
     """Delete a post from Mighty Networks via the Admin API."""
     import requests as _requests
-    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/posts/{int(post_id)}"
+    # content_id from BQ has the form "<type>_<numeric>" (e.g. "post_102202964").
+    # MN's URL expects just the numeric part.
+    _, _, _num = str(post_id).rpartition("_")
+    _numeric = _num or str(post_id)
+    url = f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}/posts/{int(_numeric)}"
     headers = {
         "Authorization": f"Bearer {api_key.strip()}",
         "Accept":        "application/json",
@@ -927,7 +974,7 @@ def _live_status_cte() -> str:
     Used by both get_open_stats() and get_daily_stats() so their KPI numbers
     always match the ticket list (which also uses a live join).
     """
-    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _gt_cols = _tickets_cols()
     return (
         "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
         "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
@@ -935,70 +982,72 @@ def _live_status_cte() -> str:
 
 
 def get_open_stats() -> dict:
-    _reopen_clause = _live_status_cte()
-    sql = f"""
-        WITH live AS (
+    def _build():
+        _reopen_clause = _live_status_cte()
+        return f"""
+            WITH live AS (
+                SELECT
+                    gt.created_at,
+                    CASE
+                        {_reopen_clause}
+                        WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
+                        ELSE gt.ticket_status
+                    END AS ticket_status
+                FROM `{config.TICKETS_TABLE}` gt
+                LEFT JOIN (
+                    SELECT * FROM `{config.META_TABLE}`
+                    QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+                ) tm ON gt.content_id = tm.content_id
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+            )
             SELECT
-                gt.created_at,
-                CASE
-                    {_reopen_clause}
-                    WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                    ELSE gt.ticket_status
-                END AS ticket_status
-            FROM `{config.TICKETS_TABLE}` gt
-            LEFT JOIN (
-                SELECT * FROM `{config.META_TABLE}`
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
-            ) tm ON gt.content_id = tm.content_id
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
-        )
-        SELECT
-            COUNTIF(ticket_status IN ('open', 'new', 'assigned'))                                       AS open,
-            COUNTIF(ticket_status IN ('open', 'new', 'assigned')
-                AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24)                         AS normal,
-            COUNTIF(ticket_status IN ('open', 'new', 'assigned')
-                AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) BETWEEN 24 AND 47)            AS urgent,
-            COUNTIF(ticket_status IN ('open', 'new', 'assigned')
-                AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) >= 48)                        AS critical
-        FROM live
-    """
-    row = client.query(sql).to_dataframe().iloc[0]
+                COUNTIF(ticket_status IN ('open', 'new', 'assigned'))                                       AS open,
+                COUNTIF(ticket_status IN ('open', 'new', 'assigned')
+                    AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24)                         AS normal,
+                COUNTIF(ticket_status IN ('open', 'new', 'assigned')
+                    AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) BETWEEN 24 AND 47)            AS urgent,
+                COUNTIF(ticket_status IN ('open', 'new', 'assigned')
+                    AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) >= 48)                        AS critical
+            FROM live
+        """
+    row = _query_with_schema_retry(_build).iloc[0]
     return row.to_dict()
 
 
 def get_daily_stats() -> dict:
-    _reopen_clause = _live_status_cte()
-    sql = f"""
-        WITH live AS (
+    def _build():
+        _reopen_clause = _live_status_cte()
+        return f"""
+            WITH live AS (
+                SELECT
+                    gt.created_at,
+                    gt.first_engagement_at,
+                    COALESCE(tm.updated_at, gt.ticket_updated_at) AS ticket_updated_at,
+                    CASE
+                        {_reopen_clause}
+                        WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
+                        ELSE gt.ticket_status
+                    END AS ticket_status
+                FROM `{config.TICKETS_TABLE}` gt
+                LEFT JOIN (
+                    SELECT * FROM `{config.META_TABLE}`
+                    QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
+                ) tm ON gt.content_id = tm.content_id
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
+            )
             SELECT
-                gt.created_at,
-                gt.first_engagement_at,
-                COALESCE(tm.updated_at, gt.ticket_updated_at) AS ticket_updated_at,
-                CASE
-                    {_reopen_clause}
-                    WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                    ELSE gt.ticket_status
-                END AS ticket_status
-            FROM `{config.TICKETS_TABLE}` gt
-            LEFT JOIN (
-                SELECT * FROM `{config.META_TABLE}`
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
-            ) tm ON gt.content_id = tm.content_id
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
-        )
-        SELECT
-            COUNTIF(DATE(created_at) = CURRENT_DATE())                                              AS in_today,
-            COUNTIF(ticket_status IN ('answered', 'closed')
-                AND DATE(COALESCE(first_engagement_at, ticket_updated_at)) = CURRENT_DATE())        AS answered_today,
-            ROUND(
-                COUNTIF(
-                    ticket_status IN ('answered', 'closed')
-                    AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
-                ) / 30.0, 1
-            )                                                                                       AS daily_avg
-        FROM live
-    """
-    row = client.query(sql).to_dataframe().iloc[0]
+                COUNTIF(DATE(created_at) = CURRENT_DATE())                                              AS in_today,
+                COUNTIF(ticket_status IN ('answered', 'closed')
+                    AND DATE(COALESCE(first_engagement_at, ticket_updated_at)) = CURRENT_DATE())        AS answered_today,
+                ROUND(
+                    COUNTIF(
+                        ticket_status IN ('answered', 'closed')
+                        AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+                    ) / 30.0, 1
+                )                                                                                       AS daily_avg
+            FROM live
+        """
+    row = _query_with_schema_retry(_build).iloc[0]
     result = row.to_dict()
     result["goal"] = config.DAILY_GOAL
     return result
@@ -1094,7 +1143,7 @@ def get_thread(thread_id: str) -> pd.DataFrame:
 
 def get_member_history(member_id: int, exclude_content_id: str = None) -> pd.DataFrame:
     exclude = f"AND gt.content_id != '{exclude_content_id}'" if exclude_content_id else ""
-    _gt_cols = _TICKETS_COLS or {f.name for f in client.get_table(config.TICKETS_TABLE).schema}
+    _gt_cols = _tickets_cols()
     _team_replied_sql = "OR gt.team_comment_replied" if "team_comment_replied" in _gt_cols else ""
     sql = f"""
         SELECT
