@@ -609,7 +609,8 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
             if answer_body.strip():
                 try:
                     _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name)
-                    bq_client.post_mn_comment(_post_id, _body, _mn_key)
+                    _posted = bq_client.post_mn_comment(_post_id, _body, _mn_key)
+                    _new_comment_id = (_posted or {}).get("id") or (_posted or {}).get("comment_id")
                     bq_client.update_ticket_meta(
                         content_id,
                         "answered",
@@ -633,7 +634,19 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
                     load_tickets.clear()
                     load_open_stats.clear()
                     load_daily_stats.clear()
-                    st.success("Answer posted to Mighty Networks." + (" Follow-up scheduled." if _fu_enabled else ""))
+                    _thread_link = ticket.get("permalink") or ""
+                    if _new_comment_id and _post_id:
+                        _thread_link = (
+                            f"https://lesko-help-2.mn.co/posts/{_post_id}/comments/{_new_comment_id}"
+                        )
+                    _suffix = " Follow-up scheduled." if _fu_enabled else ""
+                    if _thread_link:
+                        st.success(
+                            f"Answer posted to Mighty Networks.{_suffix} "
+                            f"[↗ View on MN]({_thread_link})"
+                        )
+                    else:
+                        st.success(f"Answer posted to Mighty Networks.{_suffix}")
                 except Exception as e:
                     st.error(f"Failed to post: {e}")
             else:
