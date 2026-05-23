@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Grant Helpdesk DAG</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body { background: #f0f2f5; margin: 0; padding: 24px; font-family: sans-serif; }
+    h2 { color: #333; margin-bottom: 16px; }
+    .mermaid { background: white; border-radius: 12px; padding: 32px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+  <h2>Grant Helpdesk — Full Pipeline DAG</h2>
+  <div class="mermaid">
+flowchart TD
+
+    %% SOURCES
+    subgraph SRC["① Sources"]
+        CP[core_posts]
+        CA[core_articles]
+        CC[core_comments]
+        CM[core_members]
+        CR[core_reactions]
+    end
+
+    %% STAGING
+    subgraph STG["② Staging — author filter"]
+        SGP["stg_grant_posts\nmember authors only · active"]
+        SGA["stg_grant_articles\nmember authors only · active"]
+        SGC["stg_grant_member_comments\nmember authors only · active\n+ depth + reply_to_id added"]
+        SGM[stg_grant_members]
+    end
+
+    CP --> SGP
+    CA --> SGA
+    CC --> SGC
+    CM --> SGM
+
+    %% DECISION A
+    subgraph DA_BOX["③ Decision A — what kind of comment?"]
+        DA{"depth?"}
+        DA2{"depth = 1\nFirst comment by this member\non this post?\nROW_NUMBER OVER\nPARTITION BY author_id + targetable_id\nORDER BY created_at"}
+        ROOT["Rank = 1\nThread Root\n→ ticket candidate"]
+        CONT["Rank gt 1\nThread Continuation\nmember already has a thread\non this post\n→ treated like depth-2"]
+        REPLY["depth = 2\nThread Reply\n→ no new ticket"]
+    end
+
+    SGC --> DA
+    DA -- "depth = 1" --> DA2
+    DA2 -- "first comment\non this post" --> ROOT
+    DA2 -- "member already has\na thread on this post" --> CONT
+    DA -- "depth = 2" --> REPLY
+
+    %% CLASSIFICATION
+    subgraph CLASS["④ LLM Classification — thread roots only"]
+        CAND["stg_grant_candidates\nposts + articles + depth-1 rank-1 comments"]
+        CLF["grant_question_classifier\nAI.GENERATE_BOOL · is_question?"]
+        GC["grant_content\nis_question joined in"]
+        GTL["grant_ticket_labels\nAI domain label · Gemini\nonly on is_question = TRUE rows"]
+    end
+
+    SGP --> CAND
+    SGA --> CAND
+    ROOT --> CAND
+    CAND --> CLF
+    CLF --> GC
+    GC --> GTL
+
+    %% DECISION B
+    subgraph DB_BOX["⑤ Decision B — who wrote the depth-2 reply?"]
+        DB{"author?"}
+        D2M["member reply\nJOIN core_comments depth=2\nin grant_tickets\n→ last_member_reply_at\n→ needs_attention if contains question"]
+        D2T["host / avatar reply\n→ stg_team_engagement\nteam_comment_replied signal"]
+    end
+
+    REPLY --> DB
+    CONT --> DB
+    DB -- "member" --> D2M
+    DB -- "host / avatar" --> D2T
+
+    %% TEAM ENGAGEMENT
+    subgraph TE_BOX["⑥ Team engagement — display signals only ⚠️"]
+        TE["stg_team_engagement\nteam_commented\nteam_comment_replied\nteam_reacted\n⚠️ no longer drives ticket_status"]
+    end
+
+    CC --> TE
+    CR --> TE
+    D2T --> TE
+
+    %% GRANT TICKETS
+    subgraph TICK["⑦ grant_tickets — status decision tree"]
+        GT[grant_tickets]
+        DS{"ticket_status\npriority order"}
+        S_CLOSED["closed\nexplicit coach action only"]
+        S_MANUAL["answered / assigned / flagged\nmanual coach action"]
+        S_NQ["not_a_question\nclassifier = FALSE"]
+        S_OPEN["open\ndefault"]
+        ATTN["needs_attention = TRUE\ndepth-2 member reply\ncontains a question"]
+    end
+
+    GC --> GT
+    GTL --> GT
+    SGM --> GT
+    CM --> GT
+    TE --> GT
+    D2M --> GT
+
+    GT --> DS
+    DS -- "manual_status = closed\nAND new member activity\nafter closed_at?" --> REOPEN{"new member activity\nafter closed_at?"}
+    REOPEN -- "YES → reopen" --> S_OPEN
+    REOPEN -- "NO" --> S_CLOSED
+    DS -- "manual_status set\n(not closed)" --> S_MANUAL
+    DS -- "is_question = FALSE" --> S_NQ
+    DS -- "default" --> S_OPEN
+    D2M --> ATTN
+
+    %% PORTAL
+    subgraph PORT["⑧ Grant Helpdesk Portal"]
+        ACTIVE["Active ticket view\nfilter: status NOT IN closed, not_a_question"]
+        COACH["Coach sees\n· full thread incl. depth-2 replies\n· team engagement badge\n· needs_attention flag"]
+        ACT1["Answer & Close\n→ status = closed\n→ ticket leaves portal"]
+        ACT2["Assign / Flag / Answer\n→ manual status\n→ ticket stays in portal"]
+    end
+
+    S_OPEN --> ACTIVE
+    S_MANUAL --> ACTIVE
+    ATTN --> ACTIVE
+    ACTIVE --> COACH
+    COACH --> ACT1
+    COACH --> ACT2
+    ACT1 --> S_CLOSED
+    ACT2 --> S_MANUAL
+  </div>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'default' });</script>
+</body>
+</html>
