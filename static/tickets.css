@@ -435,6 +435,46 @@
 }
 
 
+/* ═════════════════════════════════════════════
+   ANSWERED ROW TINT
+   Tickets with status "answered" get a soft green
+   background so coaches can instantly see which
+   threads already have a reply vs. which still need
+   attention. Uses :has() to target the whole row
+   container from a hidden marker element inside c0.
+═════════════════════════════════════════════ */
+
+/* Zero-size marker — just a CSS hook, invisible */
+.answered-row-marker {
+    display: none;
+}
+
+/* Tint the entire columns row when an answered marker is present */
+div[data-testid="stHorizontalBlock"]:has(.answered-row-marker) {
+    background:    #f0faf4;
+    border-radius: 6px;
+    padding:       2px 6px;
+    margin:        0 -6px;
+}
+
+/* Mute body text slightly so answered rows feel quieter */
+div[data-testid="stHorizontalBlock"]:has(.answered-row-marker) .answered-body {
+    opacity: 0.72;
+}
+
+/* Small "✓ Answered" pill */
+.answered-badge {
+    display:       inline-block;
+    font-size:     0.68rem;
+    font-weight:   600;
+    color:         #1a7a3f;
+    background:    #d4f0e0;
+    border-radius: 99px;
+    padding:       1px 7px;
+    letter-spacing: 0.02em;
+}
+
+
 /* ── Dark mode overrides ─────────────────────────── */
 @media (prefers-color-scheme: dark) {
     .mem-avatar-yellow        { color: #f0c060; }

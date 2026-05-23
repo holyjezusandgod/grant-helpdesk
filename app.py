@@ -301,6 +301,35 @@ if not st.session_state.show_filters:
     </style>
     """, unsafe_allow_html=True)
 
+# ── Data loaders ───────────────────────────────────────────────────────────────
+# Defined BEFORE the sidebar so the Refresh button (inside the sidebar) can call
+# load_tickets.clear() etc. Streamlit reruns the module top-to-bottom on every
+# interaction, so anything the sidebar references must already exist by then.
+@st.cache_data(ttl=300)
+def load_tickets(status, date_from, date_to, assignee, member_id, urgency, domain):
+    return bq_client.get_tickets(
+        status=status,
+        date_from=str(date_from) if date_from else None,
+        date_to=str(date_to) if date_to else None,
+        assignee=assignee,
+        member_id=member_id or None,
+        urgency=urgency,
+        domain=domain,
+    )
+
+@st.cache_data(ttl=300)
+def load_open_stats():
+    return bq_client.get_open_stats()
+
+@st.cache_data(ttl=300)
+def load_daily_stats():
+    return bq_client.get_daily_stats()
+
+@st.cache_data(ttl=300)
+def load_report(report_type: str, date_from: str, date_to: str):
+    return bq_client.get_report_data(report_type, date_from, date_to)
+
+
 # ── Sidebar (user account + filters) ──────────────────────────────────────────
 with st.sidebar:
     # User account
@@ -408,32 +437,6 @@ with st.sidebar:
     if st.button("◀  Hide filters", use_container_width=True):
         st.session_state.show_filters = False
         st.rerun()
-
-
-# ── Data loaders ───────────────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
-def load_tickets(status, date_from, date_to, assignee, member_id, urgency, domain):
-    return bq_client.get_tickets(
-        status=status,
-        date_from=str(date_from) if date_from else None,
-        date_to=str(date_to) if date_to else None,
-        assignee=assignee,
-        member_id=member_id or None,
-        urgency=urgency,
-        domain=domain,
-    )
-
-@st.cache_data(ttl=300)
-def load_open_stats():
-    return bq_client.get_open_stats()
-
-@st.cache_data(ttl=300)
-def load_daily_stats():
-    return bq_client.get_daily_stats()
-
-@st.cache_data(ttl=300)
-def load_report(report_type: str, date_from: str, date_to: str):
-    return bq_client.get_report_data(report_type, date_from, date_to)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -634,16 +637,40 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
             else:
                 st.warning("Answer cannot be empty.")
         if _btn_close.button("✅ Answer & Close", key=f"answer_close_{content_id}", use_container_width=True):
-            bq_client.update_ticket_meta(
-                content_id,
-                "closed",
-                ticket.get("assigned_to") or "",
-                ticket.get("domain") or "",
-                closed_by=current_user,
-            )
-            st.session_state._status_overrides[content_id] = "closed"
-            st.cache_data.clear()
-            st.rerun()
+            if not answer_body.strip():
+                st.warning("Answer cannot be empty. To close without replying, use Close from the ticket list.")
+            else:
+                try:
+                    with st.spinner("Posting answer and closing ticket…"):
+                        _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name)
+                        _posted = bq_client.post_mn_comment(_post_id, _body, _mn_key)
+                        _new_comment_id = (_posted or {}).get("id") or (_posted or {}).get("comment_id")
+                        bq_client.update_ticket_meta(
+                            content_id,
+                            "closed",
+                            ticket.get("assigned_to") or "",
+                            ticket.get("domain") or "",
+                            closed_by=current_user,
+                        )
+                    st.session_state._status_overrides[content_id] = "closed"
+                    st.session_state.pop(f"answer_{content_id}", None)
+                    st.cache_data.clear()
+                    _thread_link = ticket.get("permalink") or ""
+                    if _new_comment_id and _post_id:
+                        _thread_link = (
+                            f"https://lesko-help-2.mn.co/posts/{_post_id}/comments/{_new_comment_id}"
+                        )
+                    if _thread_link:
+                        st.success(
+                            f"✅ Answer posted to Mighty Networks and ticket closed. "
+                            f"[↗ View on MN]({_thread_link})"
+                        )
+                    else:
+                        st.success("✅ Answer posted to Mighty Networks and ticket closed.")
+                except Exception as e:
+                    bq_client.log_event("ERROR", "app.answer_and_close",
+                        f"failed content_id={content_id}", detail=str(e))
+                    st.error(f"Failed to post: {e}")
 
     st.divider()
 
