@@ -102,6 +102,28 @@ def test_get_followup_statuses_empty_input_returns_empty_dict():
     assert result == {}, f"Expected empty dict, got {result}"
 
 
+# ── Search functions ───────────────────────────────────────────────────────────
+
+def test_search_members_empty_query_returns_all_active():
+    """Empty string must load the full active-member list (used by Add-a-Coach picker)."""
+    df = bq_client.search_members("")
+    assert isinstance(df, pd.DataFrame), "Expected a DataFrame"
+    assert not df.empty, "Expected at least one active member"
+    for col in ("member_id", "full_name", "email_address"):
+        assert col in df.columns, f"Missing column: {col}"
+
+
+def test_search_members_with_apostrophe_query():
+    """
+    Regression for the parametrize fix (2026-05-23). Names containing an apostrophe
+    (O'Brien, D'Angelo) previously broke the query with a SQL syntax error because
+    the old escape used backslash instead of BigQuery's standard doubled-quote.
+    Now bound as a parameter — apostrophes are pure data, never SQL.
+    """
+    df = bq_client.search_members("O'Brien")
+    assert isinstance(df, pd.DataFrame), "Expected a DataFrame, no SQL syntax error"
+
+
 # ── Schema contract ────────────────────────────────────────────────────────────
 
 def test_tickets_table_has_required_columns():
