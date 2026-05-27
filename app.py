@@ -1809,23 +1809,26 @@ with tab_admin:
                     if not _admin_api_key:
                         st.error("No MN API key found. Add yours in the ⚙️ Settings tab first.")
                     else:
-                        # Run BQ insert + MN promotion together in background —
-                        # neither blocks the UI. Coach list cache is cleared after
-                        # insert so the next coaches reload picks up the new row.
                         _mid   = int(member["member_id"])
                         _fname = str(member["full_name"])
                         _email = str(member.get("email_address") or "")
                         _by    = current_user or "admin"
                         _key   = _admin_api_key
 
-                        def _promote_bg(mid, fname, email, added_by, api_key):
-                            bq_client.add_grant_coach(mid, fname, email, added_by)
+                        try:
+                            bq_client.add_grant_coach(_mid, _fname, _email, _by)
                             load_coaches.clear()
-                            bq_client.mn_promote_to_host(mid, api_key)
+                        except Exception as _e:
+                            bq_client.log_event("ERROR", "make_coach.add", f"Failed to add coach {_fname}", str(_e))
+                            st.error(f"Could not add coach to database: {_e}")
+                            st.stop()
 
-                        concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
-                            _promote_bg, _mid, _fname, _email, _by, _key
-                        )
+                        try:
+                            bq_client.mn_promote_to_host(_mid, _key)
+                        except Exception as _e:
+                            bq_client.log_event("ERROR", "make_coach.promote", f"Failed to promote {_fname} to host", str(_e))
+                            st.warning(f"Coach added to database, but MN host promotion failed: {_e}")
+
                         st.session_state["invite_name"] = _fname
                         st.rerun()
 
