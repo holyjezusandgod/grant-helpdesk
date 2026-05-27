@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import types
 import datetime
@@ -105,12 +106,27 @@ def mn_mention(member_id, member_name: str) -> str:
         f'data-user-id="{member_id}" href="{url}">{member_name}</a></p>'
     )
 
+_URL_RE = re.compile(r'(https?://[^\s<>&"]+)')
+
+
+def _linkify(text: str) -> str:
+    """HTML-escape text while converting bare URLs into clickable <a> tags."""
+    parts = _URL_RE.split(text)
+    out = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1:  # matched URL
+            out.append(f'<a target="_blank" rel="noopener noreferrer nofollow" href="{part}">{part}</a>')
+        else:
+            out.append(part.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    return "".join(out)
+
+
 def build_mn_body(text: str, tag_member: bool, member_id, member_name: str) -> str:
     """Wrap plain text in HTML and prepend a @mention if requested."""
-    safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    safe = _linkify(text)
     if tag_member and member_id:
         return mn_mention(member_id, member_name) + f'<p dir="auto">{safe}</p>'
-    return text  # plain text also accepted by MN API
+    return f'<p dir="auto">{safe}</p>'
 
 
 _KPI_COLORS = {
