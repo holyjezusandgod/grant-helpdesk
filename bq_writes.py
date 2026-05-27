@@ -278,14 +278,20 @@ def trigger_assignment_refresh():
             f"/repositories/{config.DATAFORM_REPOSITORY}"
         )
 
-        # Use the most recent compilation result so we don't need to compile fresh.
-        req = dataform_v1beta1.ListCompilationResultsRequest(parent=repo)
-        results = list(df_client.list_compilation_results(request=req))
-        if not results:
-            return
+        cr = df_client.create_compilation_result(
+            parent=repo,
+            compilation_result=dataform_v1beta1.CompilationResult(
+                git_commitish="main",
+                code_compilation_config=dataform_v1beta1.CodeCompilationConfig(
+                    default_database=config.PROJECT_ID,
+                    default_schema=config.DATASET,
+                    default_location="EU",
+                ),
+            ),
+        )
 
         invocation = dataform_v1beta1.WorkflowInvocation(
-            compilation_result=results[0].name,
+            compilation_result=cr.name,
             invocation_config=dataform_v1beta1.InvocationConfig(
                 included_targets=[
                     dataform_v1beta1.Target(
