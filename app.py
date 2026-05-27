@@ -106,18 +106,28 @@ def mn_mention(member_id, member_name: str) -> str:
         f'data-user-id="{member_id}" href="{url}">{member_name}</a></p>'
     )
 
+_MD_LINK_RE = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
 _URL_RE = re.compile(r'(https?://[^\s<>&"]+)')
+
+_LINK_TAG = '<a target="_blank" rel="noopener noreferrer nofollow" href="{url}">{label}</a>'
 
 
 def _linkify(text: str) -> str:
-    """HTML-escape text while converting bare URLs into clickable <a> tags."""
-    parts = _URL_RE.split(text)
+    """Convert [text](url) markdown links and bare URLs into clickable <a> tags."""
+    chunks = _MD_LINK_RE.split(text)
     out = []
-    for i, part in enumerate(parts):
-        if i % 2 == 1:  # matched URL
-            out.append(f'<a target="_blank" rel="noopener noreferrer nofollow" href="{part}">{part}</a>')
-        else:
-            out.append(part.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    for i in range(0, len(chunks), 3):
+        plain = chunks[i]
+        parts = _URL_RE.split(plain)
+        for j, part in enumerate(parts):
+            if j % 2 == 1:
+                out.append(_LINK_TAG.format(url=part, label=part))
+            else:
+                out.append(part.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+        if i + 2 < len(chunks):
+            label = chunks[i + 1].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            url = chunks[i + 2]
+            out.append(_LINK_TAG.format(url=url, label=label))
     return "".join(out)
 
 
