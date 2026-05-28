@@ -429,6 +429,10 @@ def get_open_stats() -> dict:
                     SELECT * FROM `{config.META_TABLE}`
                     QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
                 ) tm ON gt.content_id = tm.content_id
+                -- Only count tickets a coach can act on: empty-body posts/comments
+                -- have no question text and are hidden from the ticket list, so they
+                -- must not inflate the KPI either (keep in sync with get_tickets).
+                WHERE gt.body IS NOT NULL AND TRIM(gt.body) != ''
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
             )
             SELECT
