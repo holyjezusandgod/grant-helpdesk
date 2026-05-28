@@ -2,7 +2,7 @@ config {
   type: "table",
   name: "grant_tickets",
   tags: ["helpdesk"],
-  description: "Main view for the grant helpdesk dashboard. Status priority: (1) manual override from ticket_metadata, (2) team_commented → answered, (3) team_reacted → in_progress, (4) open."
+  description: "Main view for the grant helpdesk dashboard. ticket_status = manual override from ticket_metadata if set, else 'open' (or 'not_a_question' when the classifier rejects it). Lifecycle is open vs terminal (closed/cancelled/not_a_question); assignment is separate (assigned_to)."
 }
 
 -- All member activity per thread (includes depth-2 replies and rank>1 depth-1 comments from same member).

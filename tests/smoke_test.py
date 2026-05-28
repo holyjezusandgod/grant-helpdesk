@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pandas as pd
 import bq_client
+import config
 
 
 # ── Read functions ─────────────────────────────────────────────────────────────
@@ -31,22 +32,41 @@ def test_get_open_stats_returns_expected_keys():
 
 def test_get_tickets_returns_required_columns():
     """Ticket list must always have these columns — removing one breaks the UI."""
-    df = bq_client.get_tickets(status="Open")
+    df = bq_client.get_tickets(status="open")
     assert isinstance(df, pd.DataFrame), "Expected a DataFrame"
+    assert not df.empty, "Open ticket list is empty — column contract can't be verified"
     required = {"content_id", "ticket_status", "member_name", "created_at", "urgency"}
     missing = required - set(df.columns)
     assert not missing, f"Missing columns in get_tickets: {missing}"
 
 
-def test_get_tickets_excludes_closed_by_default():
-    """Default view must never show closed tickets to coaches."""
-    df = bq_client.get_tickets(status="Open")
+def test_open_list_has_no_terminal_statuses():
+    """The default 'open' view = live tickets only — never closed/cancelled/feedback."""
+    df = bq_client.get_tickets(status="open")
     if not df.empty:
-        closed_rows = df[df["ticket_status"] == "closed"]
-        assert closed_rows.empty, (
-            f"get_tickets returned {len(closed_rows)} closed ticket(s) — "
-            "should be excluded from default view"
+        terminal = df[df["ticket_status"].isin(config.TERMINAL_STATUSES)]
+        assert terminal.empty, (
+            f"get_tickets(status='open') returned {len(terminal)} terminal ticket(s): "
+            f"{terminal['ticket_status'].unique().tolist()}"
         )
+
+
+def test_is_open_status_model():
+    """The status model: terminal statuses are not open; everything else is."""
+    for s in config.TERMINAL_STATUSES:
+        assert not config.is_open_status(s), f"{s} should be terminal, not open"
+    for s in ("open", "answered", "flagged", None, ""):
+        assert config.is_open_status(s), f"{s!r} should be open"
+
+
+def test_open_kpi_matches_open_list():
+    """Open KPI and the default open list use the same predicate — counts must agree."""
+    stats = bq_client.get_open_stats()
+    df = bq_client.get_tickets(status="open")
+    assert int(stats["open"]) == len(df), (
+        f"Open KPI ({stats['open']}) != open list rows ({len(df)}) — "
+        "the two definitions have drifted apart"
+    )
 
 
 def test_get_app_logs_readable():

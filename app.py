@@ -77,7 +77,6 @@ DOMAIN_ICON = {
 
 STATUS_ICON = {
     "open":            "🔵",
-    "assigned":        "🟣",
     "answered":        "✅",
     "closed":          "🟢",
     "cancelled":       "🔴",
@@ -783,7 +782,6 @@ def _cached_member_thread(thread_id: str, member_id: str):
 
 @st.dialog("Member Thread", width="large")
 def show_group_dialog(thread_id: str, member_id: str, member_name: str):
-    _OPEN = {"open", "new", "assigned"}
     _URG_COLORS = {
         "normal":   ("#d6f0d6", "#1f6a1f"),
         "urgent":   ("#fdf3d4", "#7a5f00"),
@@ -795,8 +793,8 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
         st.warning("No tickets found.")
         return
 
-    open_tix = group_tix[group_tix["ticket_status"].isin(_OPEN)]
-    done_tix = group_tix[~group_tix["ticket_status"].isin(_OPEN)]
+    open_tix = group_tix[group_tix["ticket_status"].apply(config.is_open_status)]
+    done_tix = group_tix[~group_tix["ticket_status"].apply(config.is_open_status)]
 
     # ── Header ────────────────────────────────────────────────────────────────
     st.markdown(f"""
@@ -1039,12 +1037,8 @@ def show_assign_dialog(content_id: str, row_dict: dict):
     new_coach = st.selectbox("Grant Coach", _opts, index=_opts.index(_cur), key=f"assign_sel_{content_id}")
     if st.button("Save", type="primary", use_container_width=True, key=f"assign_save_{content_id}"):
         _av = "" if new_coach == "— unassigned —" else new_coach
-        bq_client.update_ticket_meta(
-            content_id,
-            row_dict.get("ticket_status") or "open",
-            _av,
-            row_dict.get("domain") or "",
-        )
+        # Assignment is metadata — write only assigned_to, never touch status.
+        bq_client.set_ticket_assignee(content_id, _av)
         load_tickets.clear()
         load_open_stats.clear()
         load_daily_stats.clear()
@@ -1086,7 +1080,6 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
         st.info("No tickets match the current filters.")
         return
 
-    _OPEN_S   = {"open", "new", "assigned"}
     _URG_RANK = {"critical": 2, "urgent": 1, "normal": 0}
     _URG_NAME = {2: "critical", 1: "urgent", 0: "normal"}
 
@@ -1175,10 +1168,16 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
 
         # Optimistic filter: if status was changed locally and no longer matches
         # the active filter, hide the row immediately — no BQ re-query needed.
+        # "Open" spans every live (non-terminal) status, so only hide an open-view
+        # row when the new status becomes terminal.
         if filter_status != "All" and len(grp) == 1:
             overridden = st.session_state._status_overrides.get(row["content_id"])
-            if overridden and overridden != filter_status:
-                continue
+            if overridden:
+                if filter_status == "open":
+                    if not config.is_open_status(overridden):
+                        continue
+                elif overridden != filter_status:
+                    continue
 
         if _shown > 0:
             st.markdown('<div class="ticket-divider"></div>', unsafe_allow_html=True)
@@ -1265,13 +1264,13 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
             )
 
         else:
-            n_open  = int(grp["ticket_status"].isin(_OPEN_S).sum())
+            n_open  = int(grp["ticket_status"].apply(config.is_open_status).sum())
             worst   = _URG_NAME[int(grp["urgency"].map(lambda u: _URG_RANK.get(u, 0)).max())]
 
             _grp_tid   = row.get("thread_id") or ""
             _grp_mid   = str(row.get("member_id") or "")
             _grp_mname = mem_name
-            _open_ids_in_grp = grp[grp["ticket_status"].isin(_OPEN_S)]["content_id"].tolist()
+            _open_ids_in_grp = grp[grp["ticket_status"].apply(config.is_open_status)]["content_id"].tolist()
             _grp_rdict = row.to_dict()
             _grp_cid   = row["content_id"]
 

@@ -6,7 +6,7 @@ CREATE SCHEMA IF NOT EXISTS `bigtribebuilders.grant_helpdesk`;
 
 CREATE TABLE IF NOT EXISTS `bigtribebuilders.grant_helpdesk.ticket_metadata` (
   content_id   STRING  NOT NULL,   -- matches content_id in grant_tickets
-  status       STRING,             -- 'open' | 'in_progress' | 'answered'
+  status       STRING,             -- 'open'|'answered'|'closed'|'cancelled'|'flagged' (+ feedback: 'not_a_question'|'confirmed_question'); assignment is separate (assigned_to)
   assigned_to  STRING,             -- team member full name from stg_grant_team
   updated_at   TIMESTAMP
 );

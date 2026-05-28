@@ -11,8 +11,20 @@ APP_NAME     = "Lesko Help Desk"
 APP_VERSION  = "0.1"
 DAILY_GOAL   = 50
 
-TICKET_STATUSES    = ["open", "assigned", "answered", "closed", "cancelled", "flagged"]
+# A ticket's lifecycle is binary: open (live) vs terminal (resolved).
+# "assigned" is NOT a status — assignment is orthogonal metadata in assigned_to.
+TICKET_STATUSES    = ["open", "answered", "closed", "cancelled", "flagged"]
 FEEDBACK_STATUSES  = ["not_a_question", "confirmed_question"]
+
+# Terminal = the ticket has reached a resolved/closed end-state. Everything else
+# (open, answered, flagged, NULL) is "open"/live. Single source of truth shared by
+# the Open KPI and the default ticket list so the two can never diverge.
+TERMINAL_STATUSES  = ["closed", "cancelled", "not_a_question", "confirmed_question"]
+
+
+def is_open_status(status) -> bool:
+    """True when a ticket is live (not terminal). NULL/empty defaults to open."""
+    return (status or "open") not in TERMINAL_STATUSES
 
 MEMBER_ASSIGNMENTS_TABLE = f"{PROJECT_ID}.{DATASET}.member_assignment_overrides"
 LOGS_TABLE               = f"{PROJECT_ID}.{DATASET}.app_logs"
