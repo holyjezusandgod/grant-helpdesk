@@ -90,3 +90,24 @@ def post_mn_comment(post_id: str, body: str, api_key: str, reply_to_id: int = No
     except Exception:
         detail = response.text
     raise RuntimeError(f"HTTP {response.status_code} — {detail}")
+
+
+def delete_mn_comment(post_id, comment_id, api_key: str) -> None:
+    """Delete a comment from a Mighty Networks post via the Admin API."""
+    url = (
+        f"{config.MN_API_BASE}/networks/{config.MN_NETWORK_ID}"
+        f"/posts/{int(post_id)}/comments/{int(comment_id)}"
+    )
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Accept":        "application/json",
+        "User-Agent":    "mn-api-client/1.0",
+    }
+    response = _requests.delete(url, headers=headers, timeout=30)
+    if response.status_code in (200, 204):
+        return
+    try:
+        detail = response.json()
+    except Exception:
+        detail = response.text
+    raise RuntimeError(f"HTTP {response.status_code} — {detail}")

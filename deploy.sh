@@ -31,7 +31,7 @@ echo ""
 
 cd "$(dirname "$0")"  # always run from the project root
 
-if python3 -m pytest tests/smoke_test.py -v --tb=short; then
+if python3 -m pytest tests/ -v --tb=short; then
     echo ""
     echo "✅  All tests passed."
 else

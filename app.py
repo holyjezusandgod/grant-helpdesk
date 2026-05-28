@@ -7,6 +7,7 @@ import concurrent.futures
 import streamlit as st
 import bq_client
 import config
+from mn_format import mn_mention, build_mn_body, _linkify  # noqa: F401
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lesko-ui"))
 import ui_theme
@@ -98,45 +99,22 @@ def _avatar_class(name: str) -> str:
     colors = ["mem-avatar-green", "mem-avatar-blue", "mem-avatar-red", "mem-avatar-yellow", ""]
     return colors[hash(name or "") % len(colors)]
 
-def mn_mention(member_id, member_name: str) -> str:
-    """Return the HTML snippet MN uses for a @mention tag."""
-    url = f"https://lesko-help-2.mn.co/members/{member_id}"
-    return (
-        f'<p dir="auto"><a class="mighty-mention navigate" '
-        f'data-user-id="{member_id}" href="{url}">{member_name}</a></p>'
-    )
-
-_MD_LINK_RE = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
-_URL_RE = re.compile(r'(https?://[^\s<>&"]+)')
-
-_LINK_TAG = '<a target="_blank" rel="noopener noreferrer nofollow" href="{url}">{label}</a>'
+@st.cache_data
+def _paste_links_js() -> str:
+    """Read the smart-paste interceptor script (static/paste_links.js)."""
+    with open(os.path.join(os.path.dirname(__file__), "static", "paste_links.js")) as f:
+        return f.read()
 
 
-def _linkify(text: str) -> str:
-    """Convert [text](url) markdown links and bare URLs into clickable <a> tags."""
-    chunks = _MD_LINK_RE.split(text)
-    out = []
-    for i in range(0, len(chunks), 3):
-        plain = chunks[i]
-        parts = _URL_RE.split(plain)
-        for j, part in enumerate(parts):
-            if j % 2 == 1:
-                out.append(_LINK_TAG.format(url=part, label=part))
-            else:
-                out.append(part.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
-        if i + 2 < len(chunks):
-            label = chunks[i + 1].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            url = chunks[i + 2]
-            out.append(_LINK_TAG.format(url=url, label=label))
-    return "".join(out)
+def inject_paste_links() -> None:
+    """Install the smart-paste interceptor once per page.
 
-
-def build_mn_body(text: str, tag_member: bool, member_id, member_name: str) -> str:
-    """Wrap plain text in HTML and prepend a @mention if requested."""
-    safe = _linkify(text)
-    if tag_member and member_id:
-        return mn_mention(member_id, member_name) + f'<p dir="auto">{safe}</p>'
-    return f'<p dir="auto">{safe}</p>'
+    A plain <textarea> drops embedded hyperlinks on paste. The injected script
+    rewrites pasted <a href> as [label](url) markdown in the answer box, which
+    _linkify() then turns into clickable links when posting to Mighty Networks.
+    """
+    import streamlit.components.v1 as _components
+    _components.html(f"<script>{_paste_links_js()}</script>", height=0)
 
 
 _KPI_COLORS = {
@@ -283,6 +261,9 @@ if "_bc_preview" not in st.session_state:
     st.session_state._bc_preview = None
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
+
+# ── Smart paste — keep hyperlinks from pasted rich text in answer fields ────────
+inject_paste_links()
 
 # ── Dark mode override (manual toggle — OS preference handled via @media in CSS)
 if st.session_state.dark_mode:
