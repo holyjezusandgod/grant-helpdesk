@@ -16,6 +16,13 @@ from bq_base import (
     _query_with_schema_retry,
 )
 
+# Statuses that count as "open work" — shared by the Open KPI (get_open_stats)
+# and the default Open ticket list (get_tickets) so the two never diverge.
+# ('new' is a legacy source status not exposed in the UI; it is also folded to
+# 'open' in the status CASE so it never surfaces as an orphan badge.)
+_OPEN_STATUSES = ("open", "new", "assigned")
+_OPEN_IN = "(" + ", ".join(f"'{s}'" for s in _OPEN_STATUSES) + ")"
+
 
 def _live_status_cte() -> str:
     """
@@ -67,7 +74,12 @@ def get_tickets(
     filters = ["body IS NOT NULL AND TRIM(body) != ''"]
 
     if status and status != "All":
-        filters.append(f"ticket_status = '{status}'")
+        if status == "open":
+            # "Open" = all unresolved work (open + new + assigned), matching the
+            # Open KPI in get_open_stats. Other statuses stay exact-match.
+            filters.append(f"ticket_status IN {_OPEN_IN}")
+        else:
+            filters.append(f"ticket_status = '{status}'")
     else:
         # Feedback statuses are hidden from the default view
         filters.append(f"ticket_status NOT IN ('not_a_question', 'confirmed_question', 'closed')")
@@ -115,8 +127,8 @@ def get_tickets(
                     COALESCE(tm.domain, gt.domain)                          AS domain,
                     CASE
                         {_reopen_clause}
-                        WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                        ELSE gt.ticket_status
+                        WHEN tm.status IS NOT NULL AND tm.status != ''      THEN IF(tm.status = 'new', 'open', tm.status)
+                        ELSE IF(gt.ticket_status = 'new', 'open', gt.ticket_status)
                     END                                                     AS ticket_status
                 FROM `{config.TICKETS_TABLE}` gt
                 LEFT JOIN (
@@ -161,8 +173,8 @@ def get_ticket_detail(content_id: str) -> dict:
                 COALESCE(tm.domain, gt.domain)                          AS domain,
                 CASE
                     {_reopen_clause}
-                    WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                    ELSE gt.ticket_status
+                    WHEN tm.status IS NOT NULL AND tm.status != ''      THEN IF(tm.status = 'new', 'open', tm.status)
+                    ELSE IF(gt.ticket_status = 'new', 'open', gt.ticket_status)
                 END                                                     AS ticket_status,
                 CASE
                     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
@@ -203,8 +215,8 @@ def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
                     COALESCE(tm.domain, gt.domain)                         AS domain,
                     CASE
                         {_reopen_clause}
-                        WHEN tm.status IS NOT NULL AND tm.status != ''     THEN tm.status
-                        ELSE gt.ticket_status
+                        WHEN tm.status IS NOT NULL AND tm.status != ''     THEN IF(tm.status = 'new', 'open', tm.status)
+                        ELSE IF(gt.ticket_status = 'new', 'open', gt.ticket_status)
                     END                                                    AS ticket_status,
                     CASE
                         WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
@@ -380,8 +392,8 @@ def preview_bulk_close(
                 gt.content_id,
                 gt.created_at,
                 CASE
-                    WHEN tm.status IS NOT NULL AND tm.status != '' THEN tm.status
-                    ELSE gt.ticket_status
+                    WHEN tm.status IS NOT NULL AND tm.status != '' THEN IF(tm.status = 'new', 'open', tm.status)
+                    ELSE IF(gt.ticket_status = 'new', 'open', gt.ticket_status)
                 END AS effective_status,
                 COALESCE(tm.assigned_to, gt.assigned_to) AS effective_assigned_to
             FROM `{config.TICKETS_TABLE}` gt
@@ -421,8 +433,8 @@ def get_open_stats() -> dict:
                     gt.created_at,
                     CASE
                         {_reopen_clause}
-                        WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                        ELSE gt.ticket_status
+                        WHEN tm.status IS NOT NULL AND tm.status != ''      THEN IF(tm.status = 'new', 'open', tm.status)
+                        ELSE IF(gt.ticket_status = 'new', 'open', gt.ticket_status)
                     END AS ticket_status
                 FROM `{config.TICKETS_TABLE}` gt
                 LEFT JOIN (
@@ -436,12 +448,12 @@ def get_open_stats() -> dict:
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
             )
             SELECT
-                COUNTIF(ticket_status IN ('open', 'new', 'assigned'))                                       AS open,
-                COUNTIF(ticket_status IN ('open', 'new', 'assigned')
+                COUNTIF(ticket_status IN {_OPEN_IN})                                       AS open,
+                COUNTIF(ticket_status IN {_OPEN_IN}
                     AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24)                         AS normal,
-                COUNTIF(ticket_status IN ('open', 'new', 'assigned')
+                COUNTIF(ticket_status IN {_OPEN_IN}
                     AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) BETWEEN 24 AND 47)            AS urgent,
-                COUNTIF(ticket_status IN ('open', 'new', 'assigned')
+                COUNTIF(ticket_status IN {_OPEN_IN}
                     AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) >= 48)                        AS critical
             FROM live
         """
@@ -460,8 +472,8 @@ def get_daily_stats() -> dict:
                     COALESCE(tm.updated_at, gt.ticket_updated_at) AS ticket_updated_at,
                     CASE
                         {_reopen_clause}
-                        WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                        ELSE gt.ticket_status
+                        WHEN tm.status IS NOT NULL AND tm.status != ''      THEN IF(tm.status = 'new', 'open', tm.status)
+                        ELSE IF(gt.ticket_status = 'new', 'open', gt.ticket_status)
                     END AS ticket_status
                 FROM `{config.TICKETS_TABLE}` gt
                 LEFT JOIN (
@@ -590,7 +602,7 @@ def get_member_history(member_id: int, exclude_content_id: str = None) -> pd.Dat
             gt.created_at,
             CASE
                 WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
-                WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
+                WHEN tm.status IS NOT NULL AND tm.status != ''      THEN IF(tm.status = 'new', 'open', tm.status)
                 WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
                 ELSE 'open'
             END AS ticket_status
