@@ -47,9 +47,17 @@ def _linkify(text: str) -> str:
     return "".join(out)
 
 
-def build_mn_body(text: str, tag_member: bool, member_id, member_name: str) -> str:
-    """Wrap plain text in HTML and prepend a @mention if requested."""
+def build_mn_body(text: str, tag_member: bool, member_id, member_name: str,
+                  extra_mentions=None) -> str:
+    """Wrap plain text in HTML and prepend @mentions.
+
+    extra_mentions: optional iterable of (member_id, name) tuples for tagging
+    colleagues in addition to (or instead of) the member.
+    """
     safe = _linkify(text)
+    prefix = ""
     if tag_member and member_id:
-        return mn_mention(member_id, member_name) + f'<p dir="auto">{safe}</p>'
-    return f'<p dir="auto">{safe}</p>'
+        prefix += mn_mention(member_id, member_name)
+    for _mid, _name in (extra_mentions or []):
+        prefix += mn_mention(_mid, _name)
+    return prefix + f'<p dir="auto">{safe}</p>'

@@ -456,6 +456,22 @@ def _cached_ticket_detail(content_id: str) -> dict:
 def _cached_thread(thread_id: str):
     return bq_client.get_thread(thread_id)
 
+# These three are read on every dialog rerun (e.g. when a coach picks a
+# colleague to tag). Caching keeps a rerun from re-hitting BigQuery 3× and
+# flashing the loading spinner. _cached_mn_api_key is invalidated when a key
+# is saved in Settings.
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_mn_api_key(email: str):
+    return bq_client.get_mn_api_key(email)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_upcoming_events():
+    return bq_client.get_upcoming_events()
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_member_history(member_id, exclude_content_id=None):
+    return bq_client.get_member_history(member_id, exclude_content_id=exclude_content_id)
+
 
 @st.dialog("Ticket Detail", width="large")
 def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
@@ -564,7 +580,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
 
     # Answer entry — posts to Mighty Networks via API
     st.markdown("**Post an Answer to Mighty Networks**")
-    _mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
+    _mn_key = _cached_mn_api_key(current_user) if current_user else None
     if not _mn_key:
         st.warning("No Mighty Networks API key set. Add yours in the ⚙️ Settings tab.")
     else:
@@ -572,13 +588,25 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
         _mem_id    = ticket.get("member_id")
         _mem_name  = ticket.get("member_name") or ""
 
-        _tag_col, _ans_col = st.columns([1, 3])
+        _tag_col, _colleague_col = st.columns([1, 2])
         _tag_member = _tag_col.toggle(
             f"Tag @{_mem_name.split()[0] if _mem_name else 'member'}",
             value=True,
             key=f"tag_{content_id}",
             help="Prepends a @mention so the member gets a notification",
         )
+        _colleague_choice = _colleague_col.selectbox(
+            "Tag a colleague",
+            ["— no colleague —"] + [c["name"] for c in config.TAG_COLLEAGUES],
+            key=f"tag_colleague_{content_id}",
+            help="Also @mention a colleague so they get notified",
+        )
+        _extra_mentions = []
+        if _colleague_choice and _colleague_choice != "— no colleague —":
+            _c = next((c for c in config.TAG_COLLEAGUES if c["name"] == _colleague_choice), None)
+            if _c:
+                _extra_mentions.append((_c["member_id"], _c["name"]))
+
         answer_body = st.text_area(
             "Answer", key=f"answer_{content_id}",
             label_visibility="collapsed", height=160,
@@ -614,7 +642,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
         if _btn_post.button("Post Answer to MN", key=f"post_answer_{content_id}", type="primary", use_container_width=True):
             if answer_body.strip():
                 try:
-                    _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name)
+                    _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name, extra_mentions=_extra_mentions)
                     _posted = bq_client.post_mn_comment(_post_id, _body, _mn_key)
                     _new_comment_id = (_posted or {}).get("id") or (_posted or {}).get("comment_id")
                     bq_client.update_ticket_meta(
@@ -637,6 +665,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
                         )
                     st.session_state._status_overrides[content_id] = "answered"
                     st.session_state.pop(f"answer_{content_id}", None)
+                    st.session_state.pop(f"tag_colleague_{content_id}", None)
                     load_tickets.clear()
                     load_open_stats.clear()
                     load_daily_stats.clear()
@@ -663,7 +692,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
             else:
                 try:
                     with st.spinner("Posting answer and closing ticket…"):
-                        _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name)
+                        _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name, extra_mentions=_extra_mentions)
                         _posted = bq_client.post_mn_comment(_post_id, _body, _mn_key)
                         _new_comment_id = (_posted or {}).get("id") or (_posted or {}).get("comment_id")
                         bq_client.update_ticket_meta(
@@ -675,6 +704,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
                         )
                     st.session_state._status_overrides[content_id] = "closed"
                     st.session_state.pop(f"answer_{content_id}", None)
+                    st.session_state.pop(f"tag_colleague_{content_id}", None)
                     load_tickets.clear()
                     load_open_stats.clear()
                     load_daily_stats.clear()
@@ -699,13 +729,13 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
 
     # RSVP section
     st.markdown("**📅 RSVP to Event**")
-    _events = bq_client.get_upcoming_events()
+    _events = _cached_upcoming_events()
     if not _events:
         st.caption("No upcoming events found. The sync job runs daily at 06:00.")
     else:
         _mem_id   = ticket.get("member_id")
         _mem_name = (ticket.get("member_name") or "member").split()[0]
-        _rsvp_mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
+        _rsvp_mn_key = _cached_mn_api_key(current_user) if current_user else None
 
         def _fmt_event(e):
             starts = str(e.get("starts_at", ""))[:16].replace("T", " ")
@@ -756,7 +786,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
         st.button("Generate Report", disabled=True, help="Coming soon", key=f"callsheet_{content_id}")
 
     with st.expander(f"📋 Member history ({ticket.get('member_name', '')})"):
-        history = bq_client.get_member_history(
+        history = _cached_member_history(
             ticket["member_id"], exclude_content_id=ticket["content_id"]
         )
         if history.empty:
@@ -884,7 +914,7 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
 
             with st.expander("Reply & settings for this comment"):
                 # ── Post answer to MN ──────────────────────────────────────
-                _mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
+                _mn_key = _cached_mn_api_key(current_user) if current_user else None
                 if _mn_key:
                     _pid      = thread_id.replace("post_", "")
                     _g_mem_id = t.get("member_id") or group_tix.iloc[0].get("member_id")
@@ -1002,7 +1032,7 @@ def show_delete_dialog(content_id: str, row_dict: dict):
     st.markdown(f"**Member:** {mem}")
     if prev:
         st.caption(prev[:200] + ("…" if len(prev) > 200 else ""))
-    _mn_key = bq_client.get_mn_api_key(current_user) if current_user else None
+    _mn_key = _cached_mn_api_key(current_user) if current_user else None
     if not _mn_key:
         st.warning("No Mighty Networks API key set. Add yours in the ⚙️ Settings tab.")
         if st.button("Close", use_container_width=True, key=f"del_close_{content_id}"):
@@ -1235,17 +1265,13 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
             _cid     = row["content_id"]
             _rdict   = row.to_dict()
 
-            # Always wipe the widget key before rendering so stale values from
-            # previous selections can't accidentally fire on unrelated reruns.
-            if _act_key in st.session_state:
-                del st.session_state[_act_key]
-
             def _on_action_change(cid=_cid, rdict=_rdict):
                 action = st.session_state.get(f"act_{cid}")
                 if action and action != "— action —":
-                    # Store in a separate key — cannot modify the widget's own key here.
-                    # Include row_dict so the top-level short-circuit has assigned_to + domain.
                     st.session_state["_act_triggered"] = {"action": action, "content_id": cid, "row_dict": rdict}
+                    # Reset here — the one place Streamlit lets you write a widget's own
+                    # key. Without it the value sticks and on_change re-fires every rerun.
+                    st.session_state[f"act_{cid}"] = "— action —"
 
             c3.selectbox(
                 "Action",
@@ -1282,8 +1308,6 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
             )
 
             _grp_act_key = f"act_g_{_grp_mid}_{_grp_tid.replace('-','_')}"
-            if _grp_act_key in st.session_state:
-                del st.session_state[_grp_act_key]
 
             def _on_grp_action(tid=_grp_tid, mid=_grp_mid, mname=_grp_mname,
                                 open_ids=_open_ids_in_grp, rdict=_grp_rdict, cid=_grp_cid):
@@ -1299,6 +1323,8 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
                         "member_name":      mname,
                         "open_content_ids": open_ids,
                     }
+                    # Reset here so the value can't stick and re-fire on later reruns.
+                    st.session_state[f"act_g_{mid}_{tid.replace('-','_')}"] = "— action —"
 
             c3.selectbox(
                 "Action", _ACTION_OPTS, index=0,
@@ -1642,6 +1668,7 @@ with tab_settings:
         if c1.button("Save", type="primary", use_container_width=True):
             if new_key.strip():
                 bq_client.save_mn_api_key(current_user, new_key.strip())
+                _cached_mn_api_key.clear()
                 st.success("Saved.")
                 st.rerun()
             else:
@@ -1649,7 +1676,7 @@ with tab_settings:
         if c2.button("Cancel", use_container_width=True):
             st.rerun()
 
-    _has_key = bq_client.get_mn_api_key(current_user) is not None if current_user else False
+    _has_key = _cached_mn_api_key(current_user) is not None if current_user else False
     if _has_key:
         st.success("✓ API key configured")
         if st.button("Replace key"):
@@ -1733,7 +1760,7 @@ with tab_settings:
 
 # ── ADMIN TAB ─────────────────────────────────────────────────────────────────
 with tab_admin:
-    _admin_api_key = bq_client.get_mn_api_key(current_user) if current_user else None
+    _admin_api_key = _cached_mn_api_key(current_user) if current_user else None
 
     st.subheader("Grant Coaches")
     st.caption("Coaches listed here appear as assignees in the ticket list. Promoting a member to coach also gives them host role in Mighty Networks so they can generate their own API key.")

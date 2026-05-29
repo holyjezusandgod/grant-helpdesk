@@ -46,6 +46,16 @@ FOLLOWUP_QUEUE_TABLE  = f"{PROJECT_ID}.{DATASET}.followup_queue"
 MN_NETWORK_ID  = "4022250"
 MN_API_BASE    = "https://api.mn.co/admin/v1"
 
+# Colleagues a coach can @mention from the answer pop-up. The display name is
+# what MN renders in the mention (MN does not look it up by id), so keep it the
+# person's real name. member_id is their Mighty Networks member id.
+TAG_COLLEAGUES = [
+    {"name": "Roger White",       "member_id": 20608038},
+    {"name": "Amber Littlefield", "member_id": 18218501},
+    {"name": "Amber Hawkins",     "member_id": 10443685},
+    {"name": "Megan P",           "member_id": 11554451},
+]
+
 DOMAINS = [
     "Pay Debt & Bills",
     "Home & Housing Help",
