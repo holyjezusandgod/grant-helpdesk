@@ -134,3 +134,17 @@ hr {
     background-color: #4a4a4e !important;
     border-color:     var(--color-text-muted) !important;
 }
+
+/* ── Answered ticket rows ───────────────────────────── */
+/* tickets.css tints answered rows pale green (#f0faf4) for light
+   mode; under dark mode's off-white text that's unreadable, so
+   retint to a dark green. The badge text needs higher specificity
+   than the blanket `.stApp span` !important rule above to win. */
+div[data-testid="stHorizontalBlock"]:has(.answered-row-marker) {
+    background: #20382a !important;
+}
+
+.stApp span.answered-badge {
+    background: #1f4030 !important;
+    color:      #74e2a0 !important;
+}
