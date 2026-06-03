@@ -91,6 +91,10 @@ URGENCY_ICON = {
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def _initials(name: str) -> str:
+    if not isinstance(name, str):
+        # BQ NULLs come back as float NaN through pandas — NaN is truthy and
+        # has no .split(), so coerce anything non-string to "" first.
+        name = ""
     parts = (name or "?").split()
     return "".join(p[0].upper() for p in parts[:2]) if parts else "?"
 
@@ -1293,7 +1297,8 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
                 label_visibility="collapsed",
             )
 
-            _ca = row.get("assigned_to") or ""
+            _ca = row.get("assigned_to")
+            _ca = _ca.strip() if isinstance(_ca, str) else ""  # NULL → NaN float in pandas
             c6.markdown(
                 f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
                 f'{"·" if not _ca else _initials(_ca)}</div>',
@@ -1343,7 +1348,8 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
                 label_visibility="collapsed",
             )
 
-            _ca = row.get("assigned_to") or ""
+            _ca = row.get("assigned_to")
+            _ca = _ca.strip() if isinstance(_ca, str) else ""  # NULL → NaN float in pandas
             c6.markdown(
                 f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
                 f'{"·" if not _ca else _initials(_ca)}</div>',
