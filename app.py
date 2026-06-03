@@ -177,7 +177,7 @@ if not st.user.is_logged_in:
         st.button(
             "Create an account",
             on_click=st.login,
-            args=("auth0_signup",),
+            args=("auth0signup",),
             use_container_width=True,
         )
     st.stop()
