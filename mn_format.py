@@ -47,6 +47,23 @@ def _linkify(text: str) -> str:
     return "".join(out)
 
 
+def _paragraphize(text: str) -> str:
+    """Convert plain-text line structure into the HTML MN renders.
+
+    Blank lines separate <p dir="auto"> paragraphs; single newlines inside a
+    paragraph become <br>. Without this, newlines reach MN as literal \\n
+    inside one <p> and HTML collapses them — answers show up "consolidated".
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    paras = [p for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
+    if not paras:
+        return '<p dir="auto"></p>'
+    return "".join(
+        '<p dir="auto">' + "<br>".join(_linkify(line) for line in p.split("\n")) + "</p>"
+        for p in paras
+    )
+
+
 def build_mn_body(text: str, tag_member: bool, member_id, member_name: str,
                   extra_mentions=None) -> str:
     """Wrap plain text in HTML and prepend @mentions.
@@ -54,10 +71,9 @@ def build_mn_body(text: str, tag_member: bool, member_id, member_name: str,
     extra_mentions: optional iterable of (member_id, name) tuples for tagging
     colleagues in addition to (or instead of) the member.
     """
-    safe = _linkify(text)
     prefix = ""
     if tag_member and member_id:
         prefix += mn_mention(member_id, member_name)
     for _mid, _name in (extra_mentions or []):
         prefix += mn_mention(_mid, _name)
-    return prefix + f'<p dir="auto">{safe}</p>'
+    return prefix + _paragraphize(text)

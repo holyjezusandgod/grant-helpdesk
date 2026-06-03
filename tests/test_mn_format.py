@@ -69,3 +69,38 @@ def test_build_mn_body_prepends_mention():
 def test_build_mn_body_no_mention_when_no_member_id():
     body = build_mn_body("hello", True, None, "Nobody")
     assert "mighty-mention" not in body
+
+
+def test_blank_line_becomes_paragraph_break():
+    body = build_mn_body("First point.\n\nSecond point.", False, None, "")
+    assert body == '<p dir="auto">First point.</p><p dir="auto">Second point.</p>'
+
+
+def test_single_newline_becomes_br():
+    body = build_mn_body("line one\nline two", False, None, "")
+    assert body == '<p dir="auto">line one<br>line two</p>'
+
+
+def test_multiple_blank_lines_collapse_to_one_break():
+    body = build_mn_body("a\n\n\n\nb", False, None, "")
+    assert body == '<p dir="auto">a</p><p dir="auto">b</p>'
+
+
+def test_windows_newlines_normalized():
+    body = build_mn_body("a\r\n\r\nb\r\nc", False, None, "")
+    assert body == '<p dir="auto">a</p><p dir="auto">b<br>c</p>'
+
+
+def test_links_still_work_across_paragraphs():
+    body = build_mn_body(
+        "Apply [here](https://grants.gov)\n\nOr see https://sba.gov", False, None, ""
+    )
+    assert body.count('<p dir="auto">') == 2
+    assert 'href="https://grants.gov"' in body
+    assert 'href="https://sba.gov"' in body
+
+
+def test_mention_precedes_paragraphs():
+    body = build_mn_body("hi\n\nbye", True, 99, "Jo")
+    assert body.startswith(mn_mention(99, "Jo"))
+    assert body.endswith('<p dir="auto">hi</p><p dir="auto">bye</p>')
