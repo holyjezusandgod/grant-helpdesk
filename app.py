@@ -169,6 +169,17 @@ if not st.user.is_logged_in:
             args=("auth0",),
             use_container_width=True,
         )
+        st.markdown(
+            "<p style='text-align:center;color:#6b7280;font-size:0.85rem;margin:14px 0 6px'>"
+            "New here?</p>",
+            unsafe_allow_html=True,
+        )
+        st.button(
+            "Create an account",
+            on_click=st.login,
+            args=("auth0_signup",),
+            use_container_width=True,
+        )
     st.stop()
 
 user         = st.user
