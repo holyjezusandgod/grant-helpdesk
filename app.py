@@ -829,16 +829,12 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
 
     st.divider()
 
-    # Placeholders
-    ph1, ph2 = st.columns(2)
-    ph1.button(
+    # Placeholder — "Predefined answers" used to live here as a "coming soon"
+    # button; it now ships as the "Insert standard reply" dropdown above, so
+    # only the AI-generated placeholder remains.
+    st.button(
         "🤖 AI-generated answer", disabled=True,
         help="Coming soon", key=f"ai_{content_id}",
-        use_container_width=True,
-    )
-    ph2.button(
-        "📋 Predefined answers", disabled=True,
-        help="Coming soon", key=f"pre_{content_id}",
         use_container_width=True,
     )
 
