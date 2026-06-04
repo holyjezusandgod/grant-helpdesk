@@ -9,6 +9,8 @@ import uuid
 import datetime
 import traceback
 
+from google.cloud import bigquery
+
 import config
 from bq_base import client, log_event
 
@@ -370,6 +372,50 @@ def set_member_assignment_override(member_id: int, assigned_to: str, updated_by:
     """
     client.query(sql).result()
     trigger_assignment_refresh()
+
+
+def save_standard_reply(reply_id, title: str, body: str, saved_by: str) -> str:
+    """Insert (reply_id=None) or update a standard reply. Returns the reply_id.
+
+    Uses query parameters (not string interpolation) because bodies are
+    multi-line — raw newlines are not allowed inside BQ string literals.
+    """
+    params = [
+        bigquery.ScalarQueryParameter("title", "STRING", title),
+        bigquery.ScalarQueryParameter("body", "STRING", body),
+        bigquery.ScalarQueryParameter("user", "STRING", saved_by),
+    ]
+    if reply_id is None:
+        reply_id = str(uuid.uuid4())
+        sql = f"""
+            INSERT INTO `{config.STANDARD_REPLIES_TABLE}`
+              (reply_id, title, body, is_active, created_by, created_at)
+            VALUES (@reply_id, @title, @body, TRUE, @user, CURRENT_TIMESTAMP())
+        """
+    else:
+        sql = f"""
+            UPDATE `{config.STANDARD_REPLIES_TABLE}`
+            SET title = @title, body = @body,
+                updated_by = @user, updated_at = CURRENT_TIMESTAMP()
+            WHERE reply_id = @reply_id
+        """
+    params.append(bigquery.ScalarQueryParameter("reply_id", "STRING", reply_id))
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    client.query(sql, job_config=job_config).result()
+    return reply_id
+
+
+def archive_standard_reply(reply_id: str) -> None:
+    """Hide a standard reply everywhere (soft delete — row is kept)."""
+    sql = f"""
+        UPDATE `{config.STANDARD_REPLIES_TABLE}`
+        SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP()
+        WHERE reply_id = @reply_id
+    """
+    job_config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("reply_id", "STRING", reply_id),
+    ])
+    client.query(sql, job_config=job_config).result()
 
 
 def submit_team_feedback(submitted_by: str, feedback_type: str, title: str, body: str):

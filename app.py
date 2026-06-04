@@ -487,6 +487,53 @@ def _cached_upcoming_events():
 def _cached_member_history(member_id, exclude_content_id=None):
     return bq_client.get_member_history(member_id, exclude_content_id=exclude_content_id)
 
+# Standard replies (answer templates) — managed in the 📋 Replies tab,
+# offered as an "Insert standard reply" dropdown in both answer dialogs.
+# Invalidated whenever a reply is saved or archived.
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_standard_replies():
+    return bq_client.get_standard_replies()
+
+_STD_REPLY_PLACEHOLDER = "— insert a standard reply —"
+
+def _insert_std_reply(sel_key: str, target_key: str):
+    """Selectbox on_change: append the picked reply body to the answer box.
+
+    Runs as a widget callback, i.e. BEFORE the next script run, so assigning
+    to the text_area's session_state key here is the supported way to change
+    its content. Appends (never replaces) so nothing a coach typed is lost,
+    then resets the selectbox so the same reply can be picked again later.
+    """
+    sel = st.session_state.get(sel_key)
+    if not sel or sel == _STD_REPLY_PLACEHOLDER:
+        return
+    df = _cached_standard_replies()
+    match = df[df["title"] == sel]
+    if match.empty:
+        return
+    body = str(match.iloc[0]["body"])
+    cur = (st.session_state.get(target_key) or "").rstrip()
+    st.session_state[target_key] = f"{cur}\n\n{body}" if cur else body
+    st.session_state[sel_key] = _STD_REPLY_PLACEHOLDER
+
+def _std_reply_picker(sel_key: str, target_key: str):
+    """Render the dropdown (only when replies exist) above an answer box."""
+    try:
+        _titles = _cached_standard_replies()["title"].tolist()
+    except Exception as _e:
+        bq_client.log_event("ERROR", "std_replies.load", "Could not load standard replies", str(_e))
+        _titles = []
+    if _titles:
+        st.selectbox(
+            "Insert standard reply",
+            [_STD_REPLY_PLACEHOLDER] + _titles,
+            key=sel_key,
+            on_change=_insert_std_reply,
+            args=(sel_key, target_key),
+            label_visibility="collapsed",
+            help="Appends the template below what you've already typed — edit freely before posting",
+        )
+
 
 @st.dialog("Ticket Detail", width="large")
 def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
@@ -622,6 +669,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
             if _c:
                 _extra_mentions.append((_c["member_id"], _c["name"]))
 
+        _std_reply_picker(f"stdreply_{content_id}", f"answer_{content_id}")
         answer_body = st.text_area(
             "Answer", key=f"answer_{content_id}",
             label_visibility="collapsed", height=160,
@@ -940,6 +988,7 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
                         key=f"grp_tag_{t['content_id']}",
                         help="Prepends a @mention so the member gets a notification",
                     )
+                    _std_reply_picker(f"grp_stdreply_{t['content_id']}", f"grp_ans_{t['content_id']}")
                     ans = st.text_area(
                         "Post Answer to Mighty Networks",
                         key=f"grp_ans_{t['content_id']}",
@@ -1112,7 +1161,7 @@ if not st.session_state.show_filters:
         st.session_state.show_filters = True
         st.rerun()
 
-tab_main, tab_reports, tab_train, tab_settings, tab_admin, tab_inbox = st.tabs(["🎫 Tickets", "📊 Reports", "🔍 Review AI", "⚙️ Settings", "👥 Admin", "📬 Inbox"])
+tab_main, tab_reports, tab_train, tab_replies, tab_settings, tab_admin, tab_inbox = st.tabs(["🎫 Tickets", "📊 Reports", "🔍 Review AI", "📋 Replies", "⚙️ Settings", "👥 Admin", "📬 Inbox"])
 
 _ACTION_OPTS   = ["— action —", "Answer", "Close", "Flag", "Not a question", "Assign", "Delete"]
 
@@ -1666,6 +1715,91 @@ with tab_train:
                         st.session_state._reviewed_ids.add(cid)
                         st.rerun()
             st.divider()
+
+
+# ── REPLIES TAB — shared standard replies (answer templates) ─────────────────
+with tab_replies:
+    st.subheader("📋 Standard Replies")
+    st.caption(
+        "Reusable answer templates shared by the whole team. When answering a "
+        "ticket, pick one from the **Insert standard reply** dropdown above the "
+        "answer box — it appends below whatever you've typed, so you can still "
+        "personalize before posting. Blank lines become paragraph breaks in "
+        "Mighty Networks; `[link text](https://url)` becomes a clickable link."
+    )
+
+    try:
+        _sr_df = _cached_standard_replies()
+    except Exception as _e:
+        bq_client.log_event("ERROR", "std_replies.tab", "Could not load standard replies", str(_e))
+        st.error(f"Could not load standard replies: {_e}")
+        _sr_df = None
+
+    if _sr_df is not None:
+        # ── Add new ───────────────────────────────────────────────────────────
+        with st.expander("➕ Add a standard reply", expanded=_sr_df.empty):
+            _new_title = st.text_input(
+                "Title", key="sr_new_title",
+                placeholder="e.g. Grants.gov registration checklist",
+                help="What coaches see in the dropdown — keep it short and findable",
+            )
+            _new_body = st.text_area(
+                "Reply text", key="sr_new_body", height=180,
+                placeholder="The answer text that gets inserted…",
+            )
+            if st.button("Save reply", key="sr_new_save", type="primary"):
+                if not _new_title.strip() or not _new_body.strip():
+                    st.warning("Both a title and the reply text are needed.")
+                elif _new_title.strip().lower() in (_sr_df["title"].str.strip().str.lower().tolist()):
+                    st.warning("A reply with this title already exists — edit it below instead.")
+                else:
+                    try:
+                        bq_client.save_standard_reply(None, _new_title.strip(), _new_body.strip(), current_user)
+                        _cached_standard_replies.clear()
+                        st.session_state.pop("sr_new_title", None)
+                        st.session_state.pop("sr_new_body", None)
+                        st.success("Saved.")
+                        st.rerun()
+                    except Exception as _e:
+                        bq_client.log_event("ERROR", "std_replies.add", "Could not save standard reply", str(_e))
+                        st.error(f"Could not save: {_e}")
+
+        # ── Existing replies ──────────────────────────────────────────────────
+        if _sr_df.empty:
+            st.info("No standard replies yet — add the first one above.")
+        else:
+            st.markdown(f"**{len(_sr_df)} repl{'y' if len(_sr_df) == 1 else 'ies'}**")
+            for _, _sr in _sr_df.iterrows():
+                _rid = _sr["reply_id"]
+                with st.expander(f"📄 {_sr['title']}"):
+                    _ed_title = st.text_input("Title", value=_sr["title"], key=f"sr_title_{_rid}")
+                    _ed_body = st.text_area("Reply text", value=_sr["body"], key=f"sr_body_{_rid}", height=180)
+                    _meta = f"Added by {_sr['created_by']}"
+                    if _sr.get("updated_by") and isinstance(_sr.get("updated_by"), str):
+                        _meta += f" · last edited by {_sr['updated_by']}"
+                    st.caption(_meta)
+                    _c_save, _c_arch, _ = st.columns([1, 1, 2])
+                    if _c_save.button("Save changes", key=f"sr_save_{_rid}", type="primary", use_container_width=True):
+                        if not _ed_title.strip() or not _ed_body.strip():
+                            st.warning("Both a title and the reply text are needed.")
+                        else:
+                            try:
+                                bq_client.save_standard_reply(_rid, _ed_title.strip(), _ed_body.strip(), current_user)
+                                _cached_standard_replies.clear()
+                                st.success("Saved.")
+                                st.rerun()
+                            except Exception as _e:
+                                bq_client.log_event("ERROR", "std_replies.edit", f"Could not update reply {_rid}", str(_e))
+                                st.error(f"Could not save: {_e}")
+                    if _c_arch.button("Archive", key=f"sr_arch_{_rid}", use_container_width=True,
+                                      help="Removes it from the dropdown — the text is kept and an admin can restore it"):
+                        try:
+                            bq_client.archive_standard_reply(_rid)
+                            _cached_standard_replies.clear()
+                            st.rerun()
+                        except Exception as _e:
+                            bq_client.log_event("ERROR", "std_replies.archive", f"Could not archive reply {_rid}", str(_e))
+                            st.error(f"Could not archive: {_e}")
 
 
 # ── SETTINGS TAB ──────────────────────────────────────────────────────────────

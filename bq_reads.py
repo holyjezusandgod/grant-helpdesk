@@ -734,6 +734,17 @@ def get_classification_feedback(date_from: str, date_to: str) -> pd.DataFrame:
     return client.query(sql).to_dataframe()
 
 
+def get_standard_replies() -> pd.DataFrame:
+    """Active standard replies (answer templates), ordered by title."""
+    sql = f"""
+        SELECT reply_id, title, body, created_by, created_at, updated_by, updated_at
+        FROM `{config.STANDARD_REPLIES_TABLE}`
+        WHERE is_active
+        ORDER BY LOWER(title)
+    """
+    return client.query(sql).to_dataframe()
+
+
 def get_team_feedback() -> pd.DataFrame:
     # Note: TEAM_FEEDBACK_TABLE is defined in bq_writes for write-side use; we
     # rebuild the same fully-qualified table name here to keep reads independent.
