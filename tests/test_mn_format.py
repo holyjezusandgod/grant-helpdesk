@@ -104,3 +104,40 @@ def test_mention_precedes_paragraphs():
     body = build_mn_body("hi\n\nbye", True, 99, "Jo")
     assert body.startswith(mn_mention(99, "Jo"))
     assert body.endswith('<p dir="auto">hi</p><p dir="auto">bye</p>')
+
+
+def test_markdown_bold_becomes_strong():
+    assert _linkify("make it **bold** now") == "make it <strong>bold</strong> now"
+
+
+def test_markdown_italic_becomes_em():
+    assert _linkify("a *little* emphasis") == "a <em>little</em> emphasis"
+
+
+def test_bold_and_italic_together():
+    assert _linkify("**big** and *small*") == "<strong>big</strong> and <em>small</em>"
+
+
+def test_bullet_lines_not_italicized():
+    # single leading "*" with no closing marker on the line stays literal
+    assert _linkify("* first item") == "* first item"
+
+
+def test_arithmetic_asterisks_left_alone():
+    # spaces hug the * so it is not treated as italic
+    assert _linkify("buy 2 * 3 widgets") == "buy 2 * 3 widgets"
+
+
+def test_bold_is_escaped_safely():
+    # the bold content is HTML-escaped before the <strong> wrapper is added
+    assert _linkify("**a < b**") == "<strong>a &lt; b</strong>"
+
+
+def test_formatting_works_through_build_mn_body():
+    body = build_mn_body("**bold** and *italic* and 😀", False, None, "")
+    assert body == '<p dir="auto"><strong>bold</strong> and <em>italic</em> and 😀</p>'
+
+
+def test_link_and_bold_coexist():
+    out = _linkify("see **this** [link](https://x.org)")
+    assert "<strong>this</strong>" in out and 'href="https://x.org"' in out

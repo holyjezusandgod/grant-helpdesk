@@ -12,11 +12,30 @@ import re
 _MD_LINK_RE = re.compile(r'\[([^\]]+)\]\(((?:https?://|mailto:)[^\s)]+)\)')
 _URL_RE = re.compile(r'(https?://[^\s<>&"]+)')
 
+# Markdown bold/italic. The marker must hug the text (no space just inside), so
+# bullet lines ("* item") and arithmetic ("2 * 3") are left alone. Bold runs
+# first so its ** is consumed before the single-* italic pass. MN renders the
+# resulting <strong>/<em> tags (its own editor emits the same).
+_MD_BOLD_RE   = re.compile(r'\*\*(\S(?:.*?\S)?)\*\*')
+_MD_ITALIC_RE = re.compile(r'\*(\S(?:.*?\S)?)\*')
+
 _LINK_TAG = '<a target="_blank" rel="noopener noreferrer nofollow" href="{url}">{label}</a>'
 
 
 def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _fmt(s: str) -> str:
+    """HTML-escape plain text, then apply markdown bold/italic.
+
+    Escaping happens first so the <strong>/<em> tags we add are the only live
+    HTML — anything the coach typed (stray <, >) stays inert text.
+    """
+    safe = _esc(s)
+    safe = _MD_BOLD_RE.sub(r'<strong>\1</strong>', safe)
+    safe = _MD_ITALIC_RE.sub(r'<em>\1</em>', safe)
+    return safe
 
 
 def mn_mention(member_id, member_name: str) -> str:
@@ -39,9 +58,9 @@ def _linkify(text: str) -> str:
             if j % 2 == 1:
                 out.append(_LINK_TAG.format(url=part, label=part))
             else:
-                out.append(_esc(part))
+                out.append(_fmt(part))
         if i + 2 < len(chunks):
-            label = _esc(chunks[i + 1])
+            label = _fmt(chunks[i + 1])
             url = chunks[i + 2]
             out.append(_LINK_TAG.format(url=url, label=label))
     return "".join(out)
