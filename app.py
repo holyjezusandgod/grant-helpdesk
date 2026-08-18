@@ -541,6 +541,26 @@ def _std_reply_picker(sel_key: str, target_key: str):
         )
 
 
+def _answer_already_posted(content_id: str, body: str) -> bool:
+    """True if this exact answer (same ticket + same rendered body) was already
+    posted to Mighty Networks earlier in this session.
+
+    Coaches reported every answer landing on MN twice. The post sits behind an
+    edge-triggered button inside an @st.dialog that stays open after a successful
+    post, and the call is slow (thread load + up-to-30s POST). A second fire of
+    the same click — an impatient re-click, or a Streamlit websocket reconnect
+    replaying the last interaction — would post the comment again. This guard
+    makes posting idempotent per session. A genuinely different answer body has a
+    different signature and is still allowed through."""
+    return (content_id, body) in st.session_state.setdefault("_posted_answer_sigs", set())
+
+
+def _mark_answer_posted(content_id: str, body: str) -> None:
+    """Record a successful post so an identical re-fire is skipped. Called only
+    AFTER post_mn_comment returns, so a failed post can still be retried."""
+    st.session_state.setdefault("_posted_answer_sigs", set()).add((content_id, body))
+
+
 @st.dialog("Ticket Detail", width="large")
 def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
     # ── Data fetch ─────────────────────────────────────────────────────────────
@@ -712,10 +732,16 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
 
         _btn_post, _btn_close = st.columns([2, 1])
         if _btn_post.button("Post Answer to MN", key=f"post_answer_{content_id}", type="primary", use_container_width=True):
-            if answer_body.strip():
+            if answer_body.strip() and _answer_already_posted(
+                content_id,
+                build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name, extra_mentions=_extra_mentions),
+            ):
+                st.warning("That exact answer was already posted to Mighty Networks — skipped to avoid a duplicate.")
+            elif answer_body.strip():
                 try:
                     _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name, extra_mentions=_extra_mentions)
                     _posted = bq_client.post_mn_comment(_post_id, _body, _mn_key)
+                    _mark_answer_posted(content_id, _body)
                     _new_comment_id = (_posted or {}).get("id") or (_posted or {}).get("comment_id")
                     bq_client.update_ticket_meta(
                         content_id,
@@ -761,11 +787,17 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
         if _btn_close.button("✅ Answer & Close", key=f"answer_close_{content_id}", use_container_width=True):
             if not answer_body.strip():
                 st.warning("Answer cannot be empty. To close without replying, use Close from the ticket list.")
+            elif _answer_already_posted(
+                content_id,
+                build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name, extra_mentions=_extra_mentions),
+            ):
+                st.warning("That exact answer was already posted to Mighty Networks — skipped to avoid a duplicate.")
             else:
                 try:
                     with st.spinner("Posting answer and closing ticket…"):
                         _body = build_mn_body(answer_body.strip(), _tag_member, _mem_id, _mem_name, extra_mentions=_extra_mentions)
                         _posted = bq_client.post_mn_comment(_post_id, _body, _mn_key)
+                        _mark_answer_posted(content_id, _body)
                         _new_comment_id = (_posted or {}).get("id") or (_posted or {}).get("comment_id")
                         bq_client.update_ticket_meta(
                             content_id,
@@ -1005,10 +1037,16 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
                         placeholder="Type your answer here…",
                     )
                     if st.button("Post Answer to MN", key=f"grp_post_{t['content_id']}", type="primary"):
-                        if ans.strip():
+                        if ans.strip() and _answer_already_posted(
+                            t["content_id"],
+                            build_mn_body(ans.strip(), _grp_tag, _g_mem_id, member_name),
+                        ):
+                            st.warning("That exact answer was already posted to Mighty Networks — skipped to avoid a duplicate.")
+                        elif ans.strip():
                             try:
                                 _gbody = build_mn_body(ans.strip(), _grp_tag, _g_mem_id, member_name)
                                 bq_client.post_mn_comment(_pid, _gbody, _mn_key)
+                                _mark_answer_posted(t["content_id"], _gbody)
                                 st.session_state.pop(f"grp_ans_{t['content_id']}", None)
                                 st.success("Answer posted to Mighty Networks.")
                             except Exception as e:
@@ -2173,9 +2211,14 @@ def render_inbox(current_user):
 
                     if row.get("reply_text"):
                         st.divider()
+                        # BQ NULLs surface as float NaN through pandas; NaN is not
+                        # "missing" so .get()'s default never fires and NaN.split()
+                        # crashes. Coerce anything non-string before splitting.
+                        _rb = row.get("replied_by")
+                        _rb = _rb.split("@")[0] if isinstance(_rb, str) and _rb else "admin"
                         st.markdown(
                             f'<div class="reply-block">'
-                            f'<div class="reply-meta">Reply from {row.get("replied_by","admin").split("@")[0]} · {str(row.get("replied_at",""))[:10]}</div>'
+                            f'<div class="reply-meta">Reply from {_rb} · {str(row.get("replied_at",""))[:10]}</div>'
                             f'<div>{row["reply_text"]}</div></div>',
                             unsafe_allow_html=True,
                         )
