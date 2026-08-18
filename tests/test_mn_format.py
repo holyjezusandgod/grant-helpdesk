@@ -11,7 +11,27 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from mn_format import _linkify, build_mn_body, mn_mention
+import config
+from mn_format import _linkify, build_mn_body, mn_mention, space_label, MEMBER_BIO_LABEL
+
+
+def test_space_label_member_bio_exception():
+    # A comment on the member's own profile carries space_id = network id.
+    assert space_label(config.MN_NETWORK_ID, {}) == MEMBER_BIO_LABEL
+    assert space_label(int(config.MN_NETWORK_ID), {7159013: "x"}) == MEMBER_BIO_LABEL
+
+
+def test_space_label_known_id():
+    assert space_label(7159013, {7159013: "Group Coaching Classes"}) == "Group Coaching Classes"
+    # string id resolves the same as int
+    assert space_label("7159013", {7159013: "Group Coaching Classes"}) == "Group Coaching Classes"
+
+
+def test_space_label_unknown_and_empty():
+    assert space_label(999, {7159013: "x"}) == "Space 999"
+    assert space_label(999, None) == "Space 999"
+    assert space_label(None, {}) == "—"
+    assert space_label("", {}) == "—"
 
 
 def test_markdown_link_becomes_anchor():

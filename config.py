@@ -44,6 +44,12 @@ GRANT_COACHES_TABLE     = f"{PROJECT_ID}.{DATASET}.grant_coaches"
 FOLLOWUP_QUEUE_TABLE    = f"{PROJECT_ID}.{DATASET}.followup_queue"
 STANDARD_REPLIES_TABLE  = f"{PROJECT_ID}.{DATASET}.standard_replies"
 
+# space_id → space_name lookup. Populated monthly by jobs/sync_spaces.py from
+# the MN Admin API (/spaces). Read once (cached) to label which space/channel a
+# ticket was commented in. Comments on a member's own profile carry space_id =
+# MN_NETWORK_ID → rendered as "Member bio" (see mn_format.space_label).
+SPACE_NAMES_TABLE       = f"{PROJECT_ID}.{DATASET}.space_names"
+
 MN_NETWORK_ID  = "4022250"
 MN_API_BASE    = "https://api.mn.co/admin/v1"
 

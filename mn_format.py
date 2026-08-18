@@ -9,6 +9,12 @@ that MN renders, and build_mn_body() wraps the result for the Admin API.
 
 import re
 
+import config
+
+# Label shown when a comment lives on a member's own profile rather than a
+# space. Such comments carry space_id = MN_NETWORK_ID (see space_label).
+MEMBER_BIO_LABEL = "Member bio"
+
 _MD_LINK_RE = re.compile(r'\[([^\]]+)\]\(((?:https?://|mailto:)[^\s)]+)\)')
 _URL_RE = re.compile(r'(https?://[^\s<>&"]+)')
 
@@ -36,6 +42,24 @@ def _fmt(s: str) -> str:
     safe = _MD_BOLD_RE.sub(r'<strong>\1</strong>', safe)
     safe = _MD_ITALIC_RE.sub(r'<em>\1</em>', safe)
     return safe
+
+
+def space_label(space_id, names: dict | None = None) -> str:
+    """Human-readable name of the space a ticket was commented in.
+
+    Exception: a comment on a member's own profile carries space_id equal to the
+    network id → labelled MEMBER_BIO_LABEL. Unknown ids (e.g. a space created
+    since the last monthly sync) fall back to "Space {id}". Empty/None → "—".
+    """
+    if space_id is None or space_id == "":
+        return "—"
+    if str(space_id) == str(config.MN_NETWORK_ID):
+        return MEMBER_BIO_LABEL
+    try:
+        key = int(space_id)
+    except (TypeError, ValueError):
+        return f"Space {space_id}"
+    return (names or {}).get(key, f"Space {space_id}")
 
 
 def mn_mention(member_id, member_name: str) -> str:

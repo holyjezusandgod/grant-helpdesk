@@ -7,7 +7,7 @@ import concurrent.futures
 import streamlit as st
 import bq_client
 import config
-from mn_format import mn_mention, build_mn_body, _linkify  # noqa: F401
+from mn_format import mn_mention, build_mn_body, _linkify, space_label, MEMBER_BIO_LABEL  # noqa: F401
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lesko-ui"))
 import ui_theme
@@ -350,6 +350,12 @@ def load_daily_stats():
 def load_report(report_type: str, date_from: str, date_to: str):
     return bq_client.get_report_data(report_type, date_from, date_to)
 
+@st.cache_data(ttl=86400)
+def load_space_names():
+    # space_id → space_name lookup. Synced monthly by jobs/sync_spaces.py, so a
+    # 24h cache is plenty. Used to label which space a ticket was commented in.
+    return bq_client.get_space_names()
+
 
 # ── Sidebar (user account + filters) ──────────────────────────────────────────
 with st.sidebar:
@@ -575,6 +581,8 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
     _urg_bg, _urg_fg = _urg_colors.get(_urg, _urg_colors["normal"])
     _status     = (ticket.get("ticket_status") or "open").lower()
     _domain_str = f"{domain_icon} {ticket.get('domain')}" if domain_icon else ""
+    _space_txt  = space_label(ticket.get("space_id"), load_space_names())
+    _space_icon = "👤" if _space_txt == MEMBER_BIO_LABEL else "📍"
     _permalink  = ticket.get("member_permalink") or ""
     _state      = ticket.get("member_state") or "—"
     _city       = ticket.get("member_city") or "—"
@@ -588,6 +596,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
     <span class="badge badge-{_status}">{_status.replace('_',' ').capitalize()}</span>
     <span class="urg-pill urg-{_urg}">{_urg.capitalize()}</span>
     <span class="ticket-meta-item">{content_type}</span>
+    <span class="ticket-meta-item">{_space_icon} {_space_txt}</span>
     {f'<span class="ticket-meta-item">{_domain_str}</span>' if _domain_str else ""}
     {f'<a href="{_permalink}" target="_blank" class="ticket-meta-link">↗ MN Profile</a>' if _permalink else ""}
   </div>
@@ -886,9 +895,13 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
     done_tix = group_tix[~group_tix["ticket_status"].apply(config.is_open_status)]
 
     # ── Header ────────────────────────────────────────────────────────────────
+    # All tickets in a group share a thread → same space.
+    _grp_space = space_label(group_tix.iloc[0].get("space_id"), load_space_names())
+    _grp_space_icon = "👤" if _grp_space == MEMBER_BIO_LABEL else "📍"
     st.markdown(f"""
 <div class="ticket-dialog-header">
   <span class="ticket-dialog-name">{member_name}</span>
+  <span class="ticket-meta-item" style="margin-left:10px">{_grp_space_icon} {_grp_space}</span>
   <span class="ticket-meta-item" style="margin-left:10px">{len(open_tix)} open comment{"s" if len(open_tix) != 1 else ""} · {len(done_tix)} handled</span>
 </div>
 """, unsafe_allow_html=True)
@@ -1173,6 +1186,9 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
     _URG_RANK = {"critical": 2, "urgent": 1, "normal": 0}
     _URG_NAME = {2: "critical", 1: "urgent", 0: "normal"}
 
+    # space_id → name, fetched once for the whole list (cached 24h).
+    _space_names = load_space_names()
+
     def _gk(r):
         tid = r.get("thread_id") or ""
         return f"{r['member_id']}|{tid}" if tid else str(r["content_id"])
@@ -1282,6 +1298,8 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
         _is_answered = _row_status == "answered"
         _urg_labels = {"normal": "🟢", "urgent": "🟡", "critical": "🔴"}
         _meta_parts = []
+        _row_space = space_label(row.get("space_id"), _space_names)
+        _meta_parts.append(("👤 " if _row_space == MEMBER_BIO_LABEL else "📍 ") + _row_space)
         if _row_domain_icon:
             _meta_parts.append(_row_domain_icon)
         _fu = _followup_map.get(str(row["content_id"]))

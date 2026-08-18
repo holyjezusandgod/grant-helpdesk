@@ -249,6 +249,22 @@ def get_comments(content_id: str) -> pd.DataFrame:
     return client.query(sql).to_dataframe()
 
 
+def get_space_names() -> dict:
+    """Return {space_id: space_name} from the space_names lookup table.
+
+    Populated monthly by jobs/sync_spaces.py. Callers wrap this in a cached
+    loader (app.load_space_names) so it's queried at most once per TTL. Returns
+    {} if the table is empty/missing so labelling degrades gracefully.
+    """
+    try:
+        df = client.query(
+            f"SELECT space_id, space_name FROM `{config.SPACE_NAMES_TABLE}`"
+        ).to_dataframe()
+    except Exception:
+        return {}
+    return {int(r.space_id): r.space_name for r in df.itertuples()}
+
+
 def get_mn_api_key(email: str) -> str | None:
     """Return the stored Mighty Networks API key for a user, or None."""
     sql = f"""
