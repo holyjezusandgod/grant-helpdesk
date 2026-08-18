@@ -1,0 +1,63 @@
+/*
+ * lesko-ui / dark-tokens.css  —  Layer 1b: Dark-mode token overrides
+ *
+ * The SINGLE canonical dark palette for every Lesko app. It re-declares only
+ * the token VARIABLES that change in dark mode; everything else inherits the
+ * light values in tokens.css. Because every component reads var(--…), flipping
+ * these variables reskins the whole app.
+ *
+ * Palette = warm neutral grey (iOS-style), deliberately NOT deep navy — the
+ * grant-helpdesk chose this and tuned its Streamlit widgets to it, so we
+ * standardize both apps on it.
+ *
+ * Both apps use an explicit toggle (not the OS setting), so this is scoped to
+ * :root[data-theme="dark"]:
+ *   • React portal  — applies directly (theme.js sets data-theme on <html>).
+ *   • Streamlit app — ui_theme.inject_dark_override() reads this file, rewrites
+ *     the selector to plain :root, and injects it only when dark is toggled.
+ *
+ * TOKENS ONLY. Streamlit's DOM-specific dark overrides ([data-testid]
+ * selectors) live in streamlit-dark.css — they can't be shared with React.
+ */
+:root[data-theme="dark"] {
+    /* Brand palette — lightened for dark backgrounds */
+    --color-indigo:  #8090d8;
+    --color-green:   #4db84d;
+    --color-blue:    #5a94f5;
+    --color-amber:   #f0a83c;
+
+    /* Surfaces — warm neutral grey */
+    --color-bg:           #1c1c1e;   /* page background — iOS-style dark grey */
+    --color-surface:      #2c2c2e;   /* cards, sidebar, header — slightly lighter */
+    --color-surface-2:    #3a3a3c;   /* inputs, hover rows — even lighter */
+    --color-primary-tint: #1e2340;   /* subtle indigo tint — reply blocks */
+    --color-divider:      #3a3a3c;   /* hairlines, <hr>, row separators */
+
+    /* Semantic tints, dark. Translucent rather than opaque so a badge sits on
+       whatever surface it lands on (--color-surface or --color-surface-2) and
+       still reads as the same colour. The paired text goes LIGHTER here, the
+       reverse of the light theme, because the wash is now the dark side. */
+    --tint-danger:     rgba(224, 60, 60, 0.20);
+    --on-tint-danger:  #ff9c9c;
+    --tint-warning:    rgba(245, 197, 32, 0.20);
+    --on-tint-warning: #f0d27a;
+    --tint-success:    rgba(46, 155, 46, 0.22);
+    --on-tint-success: #8ed88e;
+    --tint-info:       rgba(45, 110, 224, 0.24);
+    --on-tint-info:    #9ec0f8;
+
+    /* Text */
+    --color-text:       #f2f2f7;   /* primary — soft off-white */
+    --color-text-muted: #aeaeb2;   /* labels, captions */
+    --color-text-faint: #6c6c70;   /* dates, metadata */
+
+    /* Shadows — deeper on dark */
+    --shadow-card:  0 4px 24px rgba(0, 0, 0, 0.50);
+    --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.70);
+
+    /* KPI card colors */
+    --kpi-bg-open:     #1a2f4a;   --kpi-fg-open:     #7db8f7;
+    --kpi-bg-normal:   #1a3a1a;   --kpi-fg-normal:   #6dbd6d;
+    --kpi-bg-urgent:   #3a2d10;   --kpi-fg-urgent:   #f0c060;
+    --kpi-bg-critical: #3a1a1a;   --kpi-fg-critical: #f77d7d;
+}

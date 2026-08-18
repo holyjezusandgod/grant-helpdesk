@@ -23,11 +23,12 @@
        Do not use these directly in components.
        Use the semantic colors below instead.
     ───────────────────────────────────────────── */
-    --color-indigo:  #4a52a3;
+    --color-indigo:  #445fb6;   /* brand indigo — matches the Support Desk header */
     --color-yellow:  #f5c520;
     --color-green:   #2e9b2e;
     --color-blue:    #2d6ee0;
     --color-red:     #e03c3c;
+    --color-amber:   #ef9c1a;   /* warm amber — high-priority accents */
 
     /* ─────────────────────────────────────────────
        SEMANTIC COLORS
@@ -42,6 +43,17 @@
     --color-info:       var(--color-blue);
 
     /* ─────────────────────────────────────────────
+       SUPPORT DESK — the branded email/ticket views.
+       The header is a subtle indigo gradient; priority
+       maps to a traffic-light of dot colors.
+    ───────────────────────────────────────────── */
+    --gradient-header: linear-gradient(100deg, #4d67c4 0%, #445fb6 55%, #3f57ab 100%);
+    --color-priority-urgent: var(--color-danger);   /* red   */
+    --color-priority-high:   var(--color-amber);     /* amber */
+    --color-priority-normal: var(--color-info);      /* blue  */
+    --color-priority-low:    var(--color-text-faint);/* grey  */
+
+    /* ─────────────────────────────────────────────
        SURFACE COLORS
        Backgrounds for different layers of the UI.
        Think of surfaces like sheets of paper stacked
@@ -52,6 +64,25 @@
     --color-surface:      #ffffff;   /* cards, sidebar, header — "paper" */
     --color-surface-2:    #f5f7fb;   /* input fields, hover rows — "sticky note" */
     --color-primary-tint: #f0f4ff;   /* very light indigo — post cards, reply blocks */
+    --color-divider:      #e0e6f0;   /* hairlines, <hr>, row separators */
+
+    /* ── Semantic tints: a pale wash of a semantic colour, for badge and pill
+       backgrounds. Each is paired with an --on-tint-* text colour, because the
+       full-strength semantic colour (e.g. --color-danger #e03c3c) does NOT have
+       enough contrast on its own tint for 12px text. Always use them together:
+           background: var(--tint-danger); color: var(--on-tint-danger);
+       Added 2026-07-30: portal.css had been referencing --tint-danger/-warning/
+       -success for months and they were defined nowhere, so those pills
+       rendered with a transparent background (an undefined var() is invalid at
+       computed-value time and falls back to the initial value, silently). */
+    --tint-danger:     #fdeaea;
+    --on-tint-danger:  #a12626;
+    --tint-warning:    #fdf3d7;
+    --on-tint-warning: #7a5f00;
+    --tint-success:    #e7f6e7;
+    --on-tint-success: #1f6a1f;
+    --tint-info:       #e8f0fd;
+    --on-tint-info:    #1d4ed8;
 
     /* ─────────────────────────────────────────────
        TEXT COLORS
@@ -116,7 +147,25 @@
        card = subtle lift, used on cards and panels
        modal = stronger lift, used on dialogs/popups
     ───────────────────────────────────────────── */
-    --shadow-card:  0 4px 24px rgba(74, 82, 163, 0.10);
-    --shadow-modal: 0 8px 32px rgba(74, 82, 163, 0.18);
+    --shadow-card:  0 4px 24px rgba(68, 95, 182, 0.10);
+    --shadow-modal: 0 8px 32px rgba(68, 95, 182, 0.18);
+
+    /* ─────────────────────────────────────────────
+       KPI CARD COLORS
+       Used by kpi_card() via CSS vars so dark mode
+       can flip them without touching Python.
+    ───────────────────────────────────────────── */
+    --kpi-bg-open:     #e1edfb;   --kpi-fg-open:     #1d4e8c;
+    --kpi-bg-normal:   #e6f4e6;   --kpi-fg-normal:   #1f6a1f;
+    --kpi-bg-urgent:   #fdf3d4;   --kpi-fg-urgent:   #7a5f00;
+    --kpi-bg-critical: #fde0e0;   --kpi-fg-critical: #8a1f1f;
 
 }
+
+/* ═══════════════════════════════════════════════════════════
+   DARK MODE lives in dark-tokens.css (Layer 1b), applied via an
+   explicit theme toggle — NOT the OS `prefers-color-scheme`.
+   Both Lesko apps switch themes manually, so auto-detection is
+   deliberately absent here to avoid an OS-dark machine forcing
+   dark chrome while the app still thinks it's in light mode.
+═══════════════════════════════════════════════════════════ */

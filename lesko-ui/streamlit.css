@@ -75,14 +75,17 @@ section[data-testid="stMain"] > div {
     color: var(--color-text) !important;
 }
 
-/* Filter labels — uniform, matching tbl-header in the ticket table */
-[data-testid="stSidebar"] label {
-    font-family:    var(--font-family) !important;
-    color:          var(--color-text-faint) !important;
+/* Filter labels (the text above each selectbox / input / radio) —
+   small, uppercase, muted — like a form field label */
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stTextInput label,
+[data-testid="stSidebar"] .stRadio label,
+[data-testid="stSidebar"] .stPills label {
+    color:          var(--color-text-muted) !important;
     font-size:      var(--font-xs) !important;
-    font-weight:    600 !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.06em !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight:    500;
 }
 
 /* Headings inside the sidebar */

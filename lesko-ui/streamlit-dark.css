@@ -1,0 +1,144 @@
+/*
+ * lesko-ui / streamlit-dark.css  —  Streamlit-only dark overrides
+ *
+ * Streamlit renders its own DOM ([data-testid]/[data-baseweb] elements) that
+ * design tokens alone can't reach. These rules retint that chrome for dark mode.
+ * They are Streamlit-specific and are NOT consumed by the React portal.
+ *
+ * Injected by ui_theme.inject_dark_override() together with dark-tokens.css,
+ * only when the manual dark toggle is on. Tuned for the warm-grey palette in
+ * dark-tokens.css.
+ */
+
+/* ── Page & main area ───────────────────────────────── */
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="block-container"] {
+    background-color: var(--color-bg) !important;
+}
+
+/* ── Sidebar ────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background-color: var(--color-surface) !important;
+}
+
+/* ── Top header bar ─────────────────────────────────── */
+[data-testid="stHeader"] {
+    background-color: var(--color-surface) !important;
+    border-bottom: 1px solid var(--color-surface-2) !important;
+}
+
+/* ── Tab bar ────────────────────────────────────────── */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    background-color: var(--color-surface) !important;
+}
+
+/* ── Input fields & selectboxes ─────────────────────── */
+[data-baseweb="select"] > div,
+[data-baseweb="input"] > div,
+[data-baseweb="textarea"] > div {
+    background-color: var(--color-surface-2) !important;
+    border-color:     var(--color-surface-2) !important;
+    color:            var(--color-text) !important;
+}
+
+/* Raw <input> element inside the Member ID text field */
+[data-testid="stSidebar"] input {
+    background-color: var(--color-surface-2) !important;
+    color:            var(--color-text) !important;
+    border-color:     var(--color-text-faint) !important;
+}
+
+/* ── Pills (Date Range + Urgency) ───────────────────── */
+/* st.pills uses the ButtonGroup component in Streamlit 1.45 */
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] button,
+[data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button {
+    background-color: #4a4540 !important;
+    border-color:     #5a5550 !important;
+    color:            #c8c0b8 !important;
+}
+
+/* Selected pill — white (try all possible Streamlit selected-state attributes) */
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] button[aria-pressed="true"],
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] button[aria-selected="true"],
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] button[aria-checked="true"],
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] button[data-selected="true"],
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] button[data-active="true"],
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] button[data-highlighted="true"],
+[data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button[aria-pressed="true"],
+[data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button[aria-checked="true"],
+[data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button[data-selected="true"],
+[data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button[data-active="true"] {
+    background-color: #ffffff !important;
+    border-color:     #ffffff !important;
+    color:            #1c1c1e !important;
+}
+
+/* ── Selectbox dropdown menu ────────────────────────── */
+[data-baseweb="popover"] [data-baseweb="menu"] {
+    background-color: var(--color-surface) !important;
+}
+
+[data-baseweb="option"] {
+    background-color: var(--color-surface) !important;
+    color:            var(--color-text) !important;
+}
+
+[data-baseweb="option"]:hover {
+    background-color: var(--color-surface-2) !important;
+}
+
+/* ── All text elements ──────────────────────────────── */
+.stApp p, .stApp span, .stApp label,
+.stApp div, .stApp li, .stApp td {
+    color: var(--color-text) !important;
+}
+
+/* ── Dividers ───────────────────────────────────────── */
+hr {
+    border-color: var(--color-surface-2) !important;
+}
+
+/* ── Ticket divider ─────────────────────────────────── */
+.ticket-divider {
+    background: var(--color-surface-2) !important;
+}
+
+/* ── Section cards ──────────────────────────────────── */
+.section-card {
+    background: var(--color-surface) !important;
+}
+
+/* ── Dialogs / modals ───────────────────────────────── */
+[data-testid="stModal"] > div {
+    background-color: var(--color-surface) !important;
+}
+
+/* ── Secondary buttons (default Streamlit style) ────── */
+[data-testid="stBaseButton-secondary"],
+[data-testid="stBaseButton-secondaryFormSubmit"] {
+    background-color: var(--color-surface-2) !important;
+    border-color:     var(--color-text-faint) !important;
+    color:            var(--color-text) !important;
+}
+
+[data-testid="stBaseButton-secondary"]:hover,
+[data-testid="stBaseButton-secondaryFormSubmit"]:hover {
+    background-color: #4a4a4e !important;
+    border-color:     var(--color-text-muted) !important;
+}
+
+/* ── Answered ticket rows ───────────────────────────── */
+/* tickets.css tints answered rows pale green (#f0faf4) for light
+   mode; under dark mode's off-white text that's unreadable, so
+   retint to a dark green. The badge text needs higher specificity
+   than the blanket `.stApp span` !important rule above to win. */
+div[data-testid="stHorizontalBlock"]:has(.answered-row-marker) {
+    background: #20382a !important;
+}
+
+.stApp span.answered-badge {
+    background: #1f4030 !important;
+    color:      #74e2a0 !important;
+}

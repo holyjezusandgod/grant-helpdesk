@@ -13,6 +13,7 @@ import streamlit as st
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 _CORE_FILES = [
+    "fonts.css",       # self-hosted Inter (base64) — first, so @font-face is ready
     "tokens.css",
     "base.css",
     "components.css",
@@ -59,18 +60,36 @@ def inject():
 
 
 def inject_dark_override():
-    """Inject dark mode token overrides on top of the core lesko-ui CSS.
+    """Inject dark mode on top of the core lesko-ui CSS.
+
+    Two shared files, so the palette stays identical to the React portal:
+      • dark-tokens.css   — the canonical dark token variables (shared with React).
+        It is scoped to :root[data-theme="dark"] for the portal; Streamlit has no
+        such attribute, so we rewrite the selector to plain :root here — this file
+        is injected ONLY when the manual dark toggle is on, so unconditional :root
+        is correct.
+      • streamlit-dark.css — Streamlit-only DOM overrides ([data-testid] chrome).
 
     Call after inject() when dark_mode is enabled:
         if st.session_state.dark_mode:
             ui_theme.inject_dark_override()
     """
-    dark_path = os.path.join(_HERE, "dark.css")
-    if not os.path.exists(dark_path):
-        st.warning("[ui_theme] dark.css not found — dark mode unavailable")
-        return
-    css = _strip_comments(_read(dark_path))
-    st.markdown(f"<style>\n{css}\n</style>", unsafe_allow_html=True)
+    parts = []
+
+    tokens_path = os.path.join(_HERE, "dark-tokens.css")
+    if os.path.exists(tokens_path):
+        css = _strip_comments(_read(tokens_path))
+        css = css.replace(':root[data-theme="dark"]', ":root")
+        parts.append(css)
+    else:
+        st.warning("[ui_theme] dark-tokens.css not found — dark palette unavailable")
+
+    streamlit_dark_path = os.path.join(_HERE, "streamlit-dark.css")
+    if os.path.exists(streamlit_dark_path):
+        parts.append(_strip_comments(_read(streamlit_dark_path)))
+
+    if parts:
+        st.markdown(f"<style>\n{''.join(parts)}\n</style>", unsafe_allow_html=True)
 
 
 def inject_file(path: str):

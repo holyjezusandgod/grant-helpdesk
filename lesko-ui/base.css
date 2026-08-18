@@ -40,5 +40,5 @@ html, body, * {
    so it feels like part of the design.
 ───────────────────────────────────────────── */
 hr {
-    border-color: #e0e6f0;
+    border-color: var(--color-divider);
 }

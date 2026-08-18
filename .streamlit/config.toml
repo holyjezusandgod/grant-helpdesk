@@ -1,10 +1,12 @@
 [server]
 port = 8501
 
+# Keep these in sync with lesko-ui/tokens.css — this styles Streamlit's own
+# chrome before the injected CSS loads, so mismatches cause a flash of off-brand.
 [theme]
 base            = "light"
-primaryColor    = "#4a52a3"
-backgroundColor = "#e8eef6"
-secondaryBackgroundColor = "#ffffff"
-textColor       = "#1a1a2e"
-font            = "sans serif"
+primaryColor    = "#445fb6"        # --color-primary (brand indigo)
+backgroundColor = "#e8eef6"        # --color-bg
+secondaryBackgroundColor = "#ffffff"  # --color-surface
+textColor       = "#111827"        # --color-text
+font            = "Inter, sans-serif"  # self-hosted via lesko-ui/fonts.css
