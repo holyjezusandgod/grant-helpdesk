@@ -81,7 +81,7 @@ STATUS_ICON = {
     "closed":          "🟢",
     "cancelled":       "🔴",
     "flagged":         "🚩",
-    "not_a_question":  "⚪",
+    "archived":        "⚪",
 }
 URGENCY_ICON = {
     "normal":   "🟢",
@@ -263,8 +263,15 @@ if "_status_overrides" not in st.session_state:
     st.session_state._status_overrides = {}
 if "_open_group" not in st.session_state:
     st.session_state._open_group = None  # (thread_id, member_id, member_name)
-if "_ticket_page" not in st.session_state:
-    st.session_state._ticket_page = 0
+if "_ticket_pages" not in st.session_state:
+    # One page cursor per lane — the Tickets and Conversations tabs render at the
+    # same time, so a single shared cursor would make paging one page the other.
+    st.session_state._ticket_pages = {config.LANE_QUESTION: 0, config.LANE_GENERAL: 0}
+if "_lane_overrides" not in st.session_state:
+    # {content_id: new_lane} — same trick as _status_overrides: after a lane move
+    # we patch locally so the row leaves the tab immediately, instead of dropping
+    # the cache and re-querying BigQuery on every click.
+    st.session_state._lane_overrides = {}
 if "show_filters" not in st.session_state:
     st.session_state.show_filters = True
 if "show_kpis" not in st.session_state:
@@ -327,7 +334,10 @@ if not st.session_state.show_filters:
 # load_tickets.clear() etc. Streamlit reruns the module top-to-bottom on every
 # interaction, so anything the sidebar references must already exist by then.
 @st.cache_data(ttl=300)
-def load_tickets(status, date_from, date_to, assignee, member_id, urgency, domain):
+def load_tickets(status, date_from, date_to, assignee, member_id, urgency, domain,
+                 lane=config.LANE_QUESTION):
+    # lane is part of the cache key, so the two tabs cache independently and
+    # clearing one clears both (load_tickets.clear() drops every entry).
     return bq_client.get_tickets(
         status=status,
         date_from=str(date_from) if date_from else None,
@@ -336,6 +346,7 @@ def load_tickets(status, date_from, date_to, assignee, member_id, urgency, domai
         member_id=member_id or None,
         urgency=urgency,
         domain=domain,
+        lane=lane,
     )
 
 @st.cache_data(ttl=300)
@@ -455,7 +466,8 @@ with st.sidebar:
         load_open_stats.clear()
         load_daily_stats.clear()
         st.session_state._status_overrides = {}
-        st.session_state._ticket_page = 0
+        st.session_state._lane_overrides   = {}
+        st.session_state._ticket_pages     = {config.LANE_QUESTION: 0, config.LANE_GENERAL: 0}
         st.rerun()
     _dm_label = "☀️  Light mode" if st.session_state.dark_mode else "🌙  Dark mode"
     if st.button(_dm_label, use_container_width=True):
@@ -968,7 +980,10 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
     if open_tix.empty:
         st.info("All comments in this thread are already handled.")
     else:
-        all_statuses = config.TICKET_STATUSES + config.FEEDBACK_STATUSES
+        # Lifecycle statuses only. "Not a question" is no longer a status — it is a
+        # lane move, and it lives on the Action dropdown. 'archived' is derived from
+        # the go-live cutoff, never something a coach picks.
+        all_statuses = [s for s in config.TICKET_STATUSES if s != "archived"]
         _assignee_opts = ["— unassigned —"] + team_members
         _domain_opts   = ["— unset —"] + config.DOMAINS
 
@@ -1208,14 +1223,32 @@ if not st.session_state.show_filters:
         st.session_state.show_filters = True
         st.rerun()
 
-tab_main, tab_reports, tab_train, tab_replies, tab_settings, tab_admin, tab_inbox = st.tabs(["🎫 Tickets", "📊 Reports", "🔍 Review AI", "📋 Replies", "⚙️ Settings", "👥 Admin", "📬 Inbox"])
+tab_main, tab_convos, tab_reports, tab_train, tab_replies, tab_settings, tab_admin, tab_inbox = st.tabs(
+    ["🎫 Tickets", "💬 Conversations", "📊 Reports", "🔍 Review AI", "📋 Replies", "⚙️ Settings", "👥 Admin", "📬 Inbox"]
+)
 
-_ACTION_OPTS   = ["— action —", "Answer", "Close", "Flag", "Not a question", "Assign", "Delete"]
+# The last entry differs per lane: from Tickets you push a row OUT to
+# Conversations, from Conversations you pull it BACK. Both are lane moves and
+# both feed the classifier.
+_ACTION_OPTS = {
+    config.LANE_QUESTION: ["— action —", "Answer", "Close", "Flag", "Not a question", "Assign", "Delete"],
+    config.LANE_GENERAL:  ["— action —", "Answer", "Close", "Flag", "This is a question", "Assign", "Delete"],
+}
+# action label → lane it moves the row to
+_LANE_MOVES = {
+    "Not a question":     config.LANE_GENERAL,
+    "This is a question": config.LANE_QUESTION,
+}
 
 @st.fragment
-def render_ticket_table(tickets, team_members, filter_status="All"):
+def render_ticket_table(tickets, team_members, filter_status="All", lane=config.LANE_QUESTION):
     """Isolated fragment — re-runs only when a widget inside it changes,
-    so a status dropdown click does NOT re-run the sidebar, KPIs, or BQ queries."""
+    so a status dropdown click does NOT re-run the sidebar, KPIs, or BQ queries.
+
+    `lane` is threaded through every widget key. Tickets and Conversations both
+    render on the same Streamlit run, so a bare key like "page_next" would be
+    registered twice and Streamlit raises a duplicate-key error."""
+    _opts = _ACTION_OPTS[lane]
 
     if tickets.empty:
         st.info("No tickets match the current filters.")
@@ -1246,9 +1279,9 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
     _total_pages = max(1, -(-_total_rows // _PAGE_SIZE))  # ceiling division
 
     # Clamp page to valid range (filters changing can reduce total pages)
-    _page = min(st.session_state._ticket_page, _total_pages - 1)
-    if _page != st.session_state._ticket_page:
-        st.session_state._ticket_page = _page
+    _page = min(st.session_state._ticket_pages.get(lane, 0), _total_pages - 1)
+    if _page != st.session_state._ticket_pages.get(lane, 0):
+        st.session_state._ticket_pages[lane] = _page
 
     _page_keys  = _all_keys[_page * _PAGE_SIZE : (_page + 1) * _PAGE_SIZE]
     _page_gk    = {k: seen_gk[k] for k in _page_keys}
@@ -1256,7 +1289,7 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
     # ── Action short-circuit ──────────────────────────────────────────────────
     # on_change fired on a previous render — process BEFORE drawing any rows
     # so we skip a full 25-row render pass.
-    _triggered = st.session_state.pop("_act_triggered", None)
+    _triggered = st.session_state.pop(f"_act_triggered_{lane}", None)
     if _triggered:
         _t_cid   = _triggered["content_id"]
         _t_act   = _triggered["action"]
@@ -1276,10 +1309,11 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
                     bq_client.update_ticket_meta(_oid, "closed", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""), closed_by=current_user)
                     st.session_state._status_overrides[_oid] = "closed"
                 st.rerun()
-            elif _t_act == "Not a question":
+            elif _t_act in _LANE_MOVES:
+                _to_lane = _LANE_MOVES[_t_act]
                 for _oid in _open_ids:
-                    bq_client.update_ticket_meta(_oid, "not_a_question", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""), feedback_reason="flagged_via_quick_status")
-                    st.session_state._status_overrides[_oid] = "not_a_question"
+                    bq_client.set_ticket_lane(_oid, _to_lane, feedback_reason="flagged_via_quick_status")
+                    st.session_state._lane_overrides[_oid] = _to_lane
                 st.rerun()
             else:
                 # Flag / Assign — use representative ticket
@@ -1290,9 +1324,10 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
                 bq_client.update_ticket_meta(_t_cid, "closed", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""), closed_by=current_user)
                 st.session_state._status_overrides[_t_cid] = "closed"
                 st.rerun()
-            elif _t_act == "Not a question":
-                bq_client.update_ticket_meta(_t_cid, "not_a_question", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""), feedback_reason="flagged_via_quick_status")
-                st.session_state._status_overrides[_t_cid] = "not_a_question"
+            elif _t_act in _LANE_MOVES:
+                _to_lane = _LANE_MOVES[_t_act]
+                bq_client.set_ticket_lane(_t_cid, _to_lane, feedback_reason="flagged_via_quick_status")
+                st.session_state._lane_overrides[_t_cid] = _to_lane
                 st.rerun()
             else:
                 st.session_state._pending_action = {"action": _t_act, "content_id": _t_cid, "row": _t_rdict}
@@ -1310,8 +1345,14 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
         grp = tickets.loc[indices]
         row = grp.iloc[0]
 
-        # Optimistic filter: if status was changed locally and no longer matches
-        # the active filter, hide the row immediately — no BQ re-query needed.
+        # Optimistic filter: if status or lane was changed locally and no longer
+        # matches this tab, hide the row immediately — no BQ re-query needed.
+        # Lane first: a row moved to the other tab is gone from this one whatever
+        # its status says.
+        _moved_to = st.session_state._lane_overrides.get(row["content_id"])
+        if _moved_to and _moved_to != lane:
+            continue
+
         # "Open" spans every live (non-terminal) status, so only hide an open-view
         # row when the new status becomes terminal.
         if filter_status != "All" and len(grp) == 1:
@@ -1377,21 +1418,21 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
             c1.markdown(f'<span class="{_body_class}" style="font-size:var(--font-base);color:var(--color-text)">{safe_text}</span>', unsafe_allow_html=True)
 
 
-            _act_key = f"act_{row['content_id']}"
+            _act_key = f"act_{lane}_{row['content_id']}"
             _cid     = row["content_id"]
             _rdict   = row.to_dict()
 
-            def _on_action_change(cid=_cid, rdict=_rdict):
-                action = st.session_state.get(f"act_{cid}")
+            def _on_action_change(cid=_cid, rdict=_rdict, akey=_act_key, ln=lane):
+                action = st.session_state.get(akey)
                 if action and action != "— action —":
-                    st.session_state["_act_triggered"] = {"action": action, "content_id": cid, "row_dict": rdict}
+                    st.session_state[f"_act_triggered_{ln}"] = {"action": action, "content_id": cid, "row_dict": rdict}
                     # Reset here — the one place Streamlit lets you write a widget's own
                     # key. Without it the value sticks and on_change re-fires every rerun.
-                    st.session_state[f"act_{cid}"] = "— action —"
+                    st.session_state[akey] = "— action —"
 
             c3.selectbox(
                 "Action",
-                _ACTION_OPTS,
+                _opts,
                 index=0,
                 key=_act_key,
                 on_change=_on_action_change,
@@ -1424,13 +1465,14 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
                 unsafe_allow_html=True,
             )
 
-            _grp_act_key = f"act_g_{_grp_mid}_{_grp_tid.replace('-','_')}"
+            _grp_act_key = f"act_g_{lane}_{_grp_mid}_{_grp_tid.replace('-','_')}"
 
             def _on_grp_action(tid=_grp_tid, mid=_grp_mid, mname=_grp_mname,
-                                open_ids=_open_ids_in_grp, rdict=_grp_rdict, cid=_grp_cid):
-                action = st.session_state.get(f"act_g_{mid}_{tid.replace('-','_')}")
+                                open_ids=_open_ids_in_grp, rdict=_grp_rdict, cid=_grp_cid,
+                                akey=_grp_act_key, ln=lane):
+                action = st.session_state.get(akey)
                 if action and action != "— action —":
-                    st.session_state["_act_triggered"] = {
+                    st.session_state[f"_act_triggered_{ln}"] = {
                         "action":           action,
                         "content_id":       cid,
                         "row_dict":         rdict,
@@ -1441,10 +1483,10 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
                         "open_content_ids": open_ids,
                     }
                     # Reset here so the value can't stick and re-fire on later reruns.
-                    st.session_state[f"act_g_{mid}_{tid.replace('-','_')}"] = "— action —"
+                    st.session_state[akey] = "— action —"
 
             c3.selectbox(
-                "Action", _ACTION_OPTS, index=0,
+                "Action", _opts, index=0,
                 key=_grp_act_key, on_change=_on_grp_action,
                 label_visibility="collapsed",
             )
@@ -1464,16 +1506,16 @@ def render_ticket_table(tickets, team_members, filter_status="All"):
     if _total_pages > 1:
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
         _nc1, _nc2, _nc3 = st.columns([1, 2, 1])
-        if _nc1.button("← Prev", disabled=_page == 0, use_container_width=True, key="page_prev"):
-            st.session_state._ticket_page -= 1
+        if _nc1.button("← Prev", disabled=_page == 0, use_container_width=True, key=f"page_prev_{lane}"):
+            st.session_state._ticket_pages[lane] -= 1
             st.rerun()
         _nc2.markdown(
             f'<div style="text-align:center;font-size:0.82rem;color:#6b7280;padding-top:8px">'
             f'Page {_page + 1} of {_total_pages} &nbsp;·&nbsp; {_total_rows} tickets</div>',
             unsafe_allow_html=True,
         )
-        if _nc3.button("Next →", disabled=_page >= _total_pages - 1, use_container_width=True, key="page_next"):
-            st.session_state._ticket_page += 1
+        if _nc3.button("Next →", disabled=_page >= _total_pages - 1, use_container_width=True, key=f"page_next_{lane}"):
+            st.session_state._ticket_pages[lane] += 1
             st.rerun()
 
 
@@ -1575,12 +1617,12 @@ with tab_main:
     ).nunique() if not tickets.empty else 0
     _PAGE_SIZE = 25
     _n_pages = max(1, -(-_unique_groups // _PAGE_SIZE))
-    _page_info = f" — page {st.session_state._ticket_page + 1}/{_n_pages}" if _n_pages > 1 else ""
+    _page_info = f" — page {st.session_state._ticket_pages[config.LANE_QUESTION] + 1}/{_n_pages}" if _n_pages > 1 else ""
     st.markdown(f'<div class="section-card-title" style="padding:6px 0 10px">Tickets ({_unique_groups}){_page_info}</div>', unsafe_allow_html=True)
 
     # render_ticket_table is an @st.fragment — a status dropdown change inside it
     # only re-runs THIS fragment, not the sidebar, KPIs, or BQ queries above.
-    render_ticket_table(tickets, team_members, filter_status)
+    render_ticket_table(tickets, team_members, filter_status, lane=config.LANE_QUESTION)
 
     # Dialogs can't be opened from inside @st.fragment, so the fragment sets
     # session state and st.rerun() brings us here to open the dialog.
@@ -1603,6 +1645,45 @@ with tab_main:
             show_delete_dialog(_pa["content_id"], _pa["row"])
 
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ── CONVERSATIONS TAB ─────────────────────────────────────────────────────────
+# The general lane: member posts and comments the classifier did not read as a
+# grant question. Same table, same actions, no KPI cards — these are not tickets
+# against a response target, they are community activity worth a reply.
+#
+# Anything created before the two-lane go-live lands on 'archived' rather than
+# here; set the sidebar Status filter to Archived to see that history.
+#
+# Note the dialogs are NOT re-dispatched at the bottom of this tab. The block in
+# the Tickets tab runs on every rerun whichever tab is showing, and a Streamlit
+# dialog is an overlay, so one dispatch serves both lanes. Adding a second would
+# just consume the same session state twice.
+with tab_convos:
+    convos = load_tickets(
+        filter_status, date_from, date_to,
+        filter_assignee, filter_member_id,
+        filter_urgency, filter_domain,
+        lane=config.LANE_GENERAL,
+    )
+
+    st.caption(
+        "Posts and comments that are not grant questions. Reply, close, or send one "
+        "back to Tickets with **This is a question** — that also teaches the classifier."
+    )
+
+    _convo_groups = convos.apply(
+        lambda r: f"{r['member_id']}|{r['thread_id']}" if r.get("thread_id") else str(r["content_id"]),
+        axis=1,
+    ).nunique() if not convos.empty else 0
+    _c_pages = max(1, -(-_convo_groups // 25))
+    _c_page_info = f" — page {st.session_state._ticket_pages[config.LANE_GENERAL] + 1}/{_c_pages}" if _c_pages > 1 else ""
+    st.markdown(
+        f'<div class="section-card-title" style="padding:6px 0 10px">Conversations ({_convo_groups}){_c_page_info}</div>',
+        unsafe_allow_html=True,
+    )
+
+    render_ticket_table(convos, team_members, filter_status, lane=config.LANE_GENERAL)
 
 
 # ── REPORTS TAB ───────────────────────────────────────────────────────────────
@@ -1760,8 +1841,10 @@ with tab_train:
                         use_container_width=True,
                         type="primary",
                     ):
-                        bq_client.update_ticket_meta(
-                            cid, "confirmed_question", "",
+                        # A lane move, not a status change — the item keeps
+                        # whatever lifecycle it had and reappears under Tickets.
+                        bq_client.set_ticket_lane(
+                            cid, config.LANE_QUESTION,
                             feedback_reason="coach_review",
                         )
                         st.session_state._reviewed_ids.add(cid)

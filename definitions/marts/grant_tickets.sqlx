@@ -2,7 +2,24 @@ config {
   type: "table",
   name: "grant_tickets",
   tags: ["helpdesk"],
-  description: "Main view for the grant helpdesk dashboard. ticket_status = manual override from ticket_metadata if set, else 'open' (or 'not_a_question' when the classifier rejects it). Lifecycle is open vs terminal (closed/cancelled/not_a_question); assignment is separate (assigned_to)."
+  description: "Main view for the grant helpdesk dashboard. Two orthogonal columns: lane ('question' = a grant question for the Tickets tab, 'general' = everything else, for the Conversations tab) and ticket_status (lifecycle only: open/answered/closed/cancelled/flagged/archived). lane comes from ticket_metadata.lane when a coach has overridden the classifier, else from is_question. Assignment is separate again (assigned_to)."
+}
+
+js {
+  // The date the two-lane split went live. General-lane content created BEFORE
+  // this date lands on 'archived' rather than in the Conversations inbox: there
+  // are ~1,600 historical rows and nobody wants that as an opening backlog.
+  // It stays one Status-filter click away. One-time constant — do not bump it.
+  const GENERAL_LANE_GO_LIVE = "2026-08-19";
+
+  // lane is needed twice (as its own column, and to decide ticket_status), and
+  // BigQuery will not let a SELECT reference its own alias. Defining it once
+  // here is what stops the two copies drifting apart.
+  const LANE = `CASE
+      WHEN t.lane IS NOT NULL AND t.lane != '' THEN t.lane
+      WHEN c.is_question = FALSE               THEN 'general'
+      ELSE                                          'question'
+    END`;
 }
 
 -- All member activity per thread (includes depth-2 replies and rank>1 depth-1 comments from same member).
@@ -20,8 +37,7 @@ WITH member_activity AS (
   WHERE cc.client_id      = 'lesko_4022250'
     AND cc.comment_status = 'active'
     AND cc.author_id NOT IN (
-      SELECT member_id FROM ${ref("core_members")}
-      WHERE client_id = 'lesko_4022250' AND network_role IN ('host', 'moderator')
+      SELECT member_id FROM ${ref("stg_grant_team_members")}
     )
     AND cc.author_id NOT IN (
       SELECT member_id FROM ${ref("info_avatars")} WHERE client_id = 'lesko_4022250'
@@ -41,7 +57,7 @@ SELECT
   c.updated_at,
   c.last_activity_at,
 
-  -- member fields (stg_grant_members for regular members; core_members fallback for hosts/moderators)
+  -- member fields (stg_grant_members for regular members; core_members fallback for team)
   c.member_id,
   COALESCE(m.full_name, CONCAT(COALESCE(cm.first_name, ''), ' ', COALESCE(cm.last_name, ''))) AS member_name,
   COALESCE(m.first_name,    cm.first_name)    AS first_name,
@@ -66,18 +82,32 @@ SELECT
   -- needs_attention: member replied after the team first engaged (thread may need follow-up)
   COALESCE(ma.last_member_activity_at > te.first_engagement_at, FALSE) AS needs_attention,
 
-  -- ticket status — explicit coach actions only:
-  -- (1) closed but member replied since → auto-reopen
-  -- (2) closed and no new member activity → closed
-  -- (3) any other manual status → use it
-  -- (4) classifier rejected → not_a_question
-  -- (5) default → open
+  -- lane — which inbox this belongs in. A coach's override in ticket_metadata
+  -- beats the classifier; with no override we trust is_question.
+  ${LANE}                                           AS lane,
+
+  -- ticket status — lifecycle ONLY (the question/general split lives in lane).
+  -- General lane first, because its rules are different:
+  --   (1) an explicit coach action always wins
+  --   (2) anything from before go-live is archived, not inbox
+  --   (3) otherwise it is a live conversation
+  -- Question lane, unchanged from before the split:
+  --   (4) closed but member replied since → auto-reopen
+  --   (5) closed and no new member activity → closed
+  --   (6) any other manual status → use it
+  --   (7) default → open
   CASE
+    WHEN ${LANE} = 'general' AND t.status IS NOT NULL
+     AND t.status != ''                             THEN t.status
+    WHEN ${LANE} = 'general'
+     AND DATE(c.created_at) < DATE '${GENERAL_LANE_GO_LIVE}'
+                                                    THEN 'archived'
+    WHEN ${LANE} = 'general'                        THEN 'open'
+
     WHEN t.status = 'closed'
-     AND ma.last_member_activity_at > t.closed_at  THEN 'open'
+     AND ma.last_member_activity_at > t.closed_at   THEN 'open'
     WHEN t.status = 'closed'                        THEN 'closed'
     WHEN t.status IS NOT NULL                       THEN t.status
-    WHEN c.is_question = FALSE                      THEN 'not_a_question'
     ELSE                                                 'open'
   END                                               AS ticket_status,
 

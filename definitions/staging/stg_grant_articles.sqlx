@@ -28,10 +28,7 @@ FROM ${ref("core_articles")}
 WHERE client_id      = 'lesko_4022250'
   AND article_status = 'active'
   AND creator_id NOT IN (
-    SELECT member_id
-    FROM ${ref("core_members")}
-    WHERE client_id    = 'lesko_4022250'
-      AND network_role IN ('host', 'moderator')
+    SELECT member_id FROM ${ref("stg_grant_team_members")}
   )
   AND creator_id NOT IN (
     SELECT member_id FROM ${ref("info_avatars")} WHERE client_id = 'lesko_4022250'

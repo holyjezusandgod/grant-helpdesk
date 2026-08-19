@@ -1,0 +1,36 @@
+config {
+  type: "view",
+  name: "stg_grant_team_members",
+  tags: ["helpdesk"],
+  description: "THE definition of 'team' for the whole helpdesk pipeline: Mighty Networks hosts and moderators, plus anyone hand-added to team_member_overrides. Every model that needs to tell team from member reads this view, so the rule cannot drift between them."
+}
+
+-- Membership of this view has three separate effects downstream, which is why
+-- it is worth changing carefully:
+--   1. team content never becomes a ticket (stg_grant_posts / _articles /
+--      _member_comments, stg_grant_members)
+--   2. team comments and reactions ARE engagement on member content
+--      (stg_team_engagement -> team_commented / team_reacted)
+--   3. a team reply does not count as member activity, so it cannot auto-reopen
+--      a closed ticket (grant_tickets.member_activity)
+
+SELECT member_id FROM (
+
+  -- Roles Mighty Networks actually grants. NOT 'contributor' — that is the
+  -- default role held by 27,278 members, i.e. everyone.
+  SELECT member_id
+  FROM ${ref("core_members")}
+  WHERE client_id    = 'lesko_4022250'
+    AND network_role IN ('host', 'moderator')
+
+  UNION DISTINCT
+
+  -- People Lesko treats as team regardless of their MN role.
+  SELECT member_id
+  FROM ${ref("team_member_overrides")}
+  WHERE active
+
+)
+-- NOT IN (subquery) yields NULL — and therefore drops every row — if the
+-- subquery contains a single NULL. Cheap insurance for the five callers.
+WHERE member_id IS NOT NULL

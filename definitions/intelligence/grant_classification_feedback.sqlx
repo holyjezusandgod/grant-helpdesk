@@ -1,12 +1,17 @@
 config {
   type: "view",
   name: "grant_classification_feedback",
-  description: "Weekly feedback on AI classifier accuracy. Combines not_a_question and confirmed_question flags with original content for prompt improvement."
+  description: "Weekly feedback on AI classifier accuracy. Every coach lane override (ticket_metadata.lane) with a reason, joined to the original content, for prompt improvement. feedback_type keeps the historical not_a_question / confirmed_question wording so update_classifier_prompt needs no change."
 }
 
 SELECT
   t.content_id,
-  t.status                                        AS feedback_type,
+  -- lane is the coach's verdict; the old status wording is preserved here so
+  -- update_classifier_prompt and the Review AI tab keep reading what they always did.
+  CASE t.lane
+    WHEN 'general'  THEN 'not_a_question'
+    WHEN 'question' THEN 'confirmed_question'
+  END                                             AS feedback_type,
   t.feedback_reason,
   t.updated_at                                    AS flagged_at,
   t.assigned_to                                   AS flagged_by,
@@ -22,5 +27,8 @@ FROM `bigtribebuilders.grant_helpdesk.ticket_metadata` t
 INNER JOIN ${ref("grant_tickets")} gt
   ON t.content_id = gt.content_id
 
-WHERE t.status IN ('not_a_question', 'confirmed_question')
+-- A lane override is only classifier feedback when the coach gave a reason.
+-- Reading lane rather than status is what makes this durable: closing the
+-- conversation afterwards no longer erases the feedback.
+WHERE t.lane IN ('general', 'question')
   AND t.feedback_reason IS NOT NULL

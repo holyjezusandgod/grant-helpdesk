@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "bigtribebuilders",
+  schema: "grant_helpdesk",
+  name: "team_member_overrides",
+  description: "Hand-maintained list of members treated as team despite their Mighty Networks role. Created by migrations/014."
+}

@@ -1,8 +1,19 @@
+import os
+
 PROJECT_ID = "bigtribebuilders"
 DATASET    = "grant_helpdesk"
 
-TICKETS_TABLE  = f"{PROJECT_ID}.{DATASET}.grant_tickets"
-META_TABLE     = f"{PROJECT_ID}.{DATASET}.ticket_metadata"
+# Preview mode — set HELPDESK_PREVIEW=1 to run the app against a throwaway copy
+# of the two tables the app WRITES to and derives status from. Everything else
+# (comments, coaches, spaces, replies) still reads the real dataset, so the app
+# looks and behaves exactly like production while it cannot touch it.
+# Used to demo a schema change locally while coaches are working in the live app.
+PREVIEW        = os.getenv("HELPDESK_PREVIEW") == "1"
+_LIVE_DATASET  = f"{PROJECT_ID}.{DATASET}"
+_WORK_DATASET  = f"{PROJECT_ID}.{DATASET}_preview" if PREVIEW else _LIVE_DATASET
+
+TICKETS_TABLE  = f"{_WORK_DATASET}.grant_tickets"
+META_TABLE     = f"{_WORK_DATASET}.ticket_metadata"
 COMMENTS_TABLE = f"{PROJECT_ID}.{DATASET}.ticket_comments"
 COMMENTS_VIEW  = f"{PROJECT_ID}.{DATASET}.grant_comments"
 TEAM_TABLE     = f"{PROJECT_ID}.{DATASET}.stg_grant_team"
@@ -11,15 +22,24 @@ APP_NAME     = "Lesko Help Desk"
 APP_VERSION  = "0.1"
 DAILY_GOAL   = 50
 
+# Lanes — which inbox a piece of content belongs in. This is orthogonal to
+# status: a general-lane conversation still opens, gets answered and closes.
+# "not a question" used to be a STATUS, which meant closing such an item erased
+# the fact that it was never a question. It is a lane now.
+LANE_QUESTION = "question"   # Tickets tab
+LANE_GENERAL  = "general"    # Conversations tab
+LANES         = [LANE_QUESTION, LANE_GENERAL]
+
 # A ticket's lifecycle is binary: open (live) vs terminal (resolved).
 # "assigned" is NOT a status — assignment is orthogonal metadata in assigned_to.
-TICKET_STATUSES    = ["open", "answered", "closed", "cancelled", "flagged"]
-FEEDBACK_STATUSES  = ["not_a_question", "confirmed_question"]
+# "archived" is general-lane only: content from before the two-lane go-live,
+# kept reachable via the Status filter but out of the Conversations inbox.
+TICKET_STATUSES    = ["open", "answered", "closed", "cancelled", "flagged", "archived"]
 
 # Terminal = the ticket has reached a resolved/closed end-state. Everything else
 # (open, answered, flagged, NULL) is "open"/live. Single source of truth shared by
 # the Open KPI and the default ticket list so the two can never diverge.
-TERMINAL_STATUSES  = ["closed", "cancelled", "not_a_question", "confirmed_question"]
+TERMINAL_STATUSES  = ["closed", "cancelled", "archived"]
 
 
 def is_open_status(status) -> bool:

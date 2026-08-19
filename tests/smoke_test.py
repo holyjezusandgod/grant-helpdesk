@@ -160,3 +160,63 @@ def test_tickets_table_has_required_columns():
         f"grant_tickets is missing expected columns: {missing}\n"
         "Run Dataform to rebuild, or check if a column was renamed."
     )
+
+
+# ── Lanes ──────────────────────────────────────────────────────────────────────
+
+def test_lanes_partition_every_ticket():
+    """
+    lane is the question/general split; it must cover every row and never leak
+    the old status wording. If 'not_a_question' shows up as a ticket_status again,
+    the two concerns have been re-conflated and the Conversations tab will be wrong.
+    """
+    for lane in config.LANES:
+        df = bq_client.get_tickets(status="All", lane=lane)
+        assert set(df["lane"].unique()) <= {lane}, f"{lane} query returned other lanes"
+        leaked = set(df["ticket_status"].unique()) & {"not_a_question", "confirmed_question"}
+        assert not leaked, f"lane wording leaked back into ticket_status: {leaked}"
+
+
+def test_ticket_statuses_are_lifecycle_only():
+    """Every status the app can show must be a known lifecycle value."""
+    known = set(config.TICKET_STATUSES)
+    for lane in config.LANES:
+        seen = set(bq_client.get_tickets(status="All", lane=lane)["ticket_status"].dropna())
+        assert seen <= known, f"unknown statuses in {lane} lane: {seen - known}"
+
+
+def test_open_kpi_counts_questions_only():
+    """
+    The four KPI cards are about grant questions. A conversation must never
+    inflate them — that was the whole point of giving it its own tab.
+    """
+    kpi   = int(bq_client.get_open_stats()["open"])
+    q_open = len(bq_client.get_tickets(status="open", lane=config.LANE_QUESTION))
+    g_open = len(bq_client.get_tickets(status="open", lane=config.LANE_GENERAL))
+    assert kpi <= q_open + 1, f"Open KPI ({kpi}) exceeds the question lane ({q_open})"
+    if g_open:
+        assert kpi < q_open + g_open, "Open KPI appears to include conversations"
+
+
+def test_set_ticket_lane_leaves_status_alone():
+    """
+    A lane move must not write a status. This is the bug the lane column exists
+    to prevent: closing a rejected item used to erase the 'never a question'
+    verdict, and the classifier silently stopped learning from it.
+    """
+    df = bq_client.get_tickets(status="open", lane=config.LANE_GENERAL)
+    if df.empty:
+        return  # nothing in the general lane right now — nothing to prove
+    row     = df.iloc[0]
+    cid     = row["content_id"]
+    before  = row["manual_status"]
+
+    bq_client.set_ticket_lane(cid, config.LANE_QUESTION, feedback_reason="smoke_test")
+    moved = bq_client.get_ticket_detail(cid)
+    assert moved["lane"] == config.LANE_QUESTION, "lane move did not take effect"
+    assert moved["manual_status"] == before, "lane move overwrote the lifecycle status"
+
+    bq_client.set_ticket_lane(cid, config.LANE_GENERAL, feedback_reason="smoke_test")
+    back = bq_client.get_ticket_detail(cid)
+    assert back["lane"] == config.LANE_GENERAL, "return trip did not restore the lane"
+    assert back["manual_status"] == before, "return trip overwrote the lifecycle status"

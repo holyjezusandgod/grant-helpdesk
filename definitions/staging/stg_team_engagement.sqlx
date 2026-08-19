@@ -2,15 +2,12 @@ config {
   type: "table",
   name: "stg_team_engagement",
   tags: ["helpdesk"],
-  description: "Per content_id: has any host or moderator commented or reacted to this member's content? Three boolean signals used in grant_tickets to auto-derive ticket status. team_comment_replies catches team replies to comment tickets specifically."
+  description: "Per content_id: has anyone on the team (stg_grant_team_members) commented or reacted to this member's content? Three boolean signals used in grant_tickets to auto-derive ticket status. team_comment_replies catches team replies to comment tickets specifically."
 }
 
 WITH team_members AS (
 
-  SELECT member_id
-  FROM ${ref("core_members")}
-  WHERE client_id    = 'lesko_4022250'
-    AND network_role IN ('host', 'moderator')
+  SELECT member_id FROM ${ref("stg_grant_team_members")}
 
 ),
 

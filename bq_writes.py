@@ -249,18 +249,61 @@ def update_ticket_meta(
             status          = S.status,
             assigned_to     = S.assigned_to,
             domain          = S.domain,
-            feedback_reason = S.feedback_reason,
+            -- Keep any reason already on the row when this call does not carry one.
+            -- A reason is classifier feedback and lives as long as the lane does;
+            -- closing a ticket must not quietly blank it.
+            feedback_reason = COALESCE(NULLIF(S.feedback_reason, ''), T.feedback_reason),
             updated_at      = S.updated_at,
             closed_at       = S.closed_at,
             closed_by       = S.closed_by
         WHEN NOT MATCHED THEN INSERT
             (content_id, status, assigned_to, domain, feedback_reason, updated_at, closed_at, closed_by)
         VALUES
-            (S.content_id, S.status, S.assigned_to, S.domain, S.feedback_reason, S.updated_at, S.closed_at, S.closed_by)
+            (S.content_id, S.status, S.assigned_to, S.domain, NULLIF(S.feedback_reason, ''), S.updated_at, S.closed_at, S.closed_by)
     """
     client.query(sql).result()
     if assigned_to:
         trigger_assignment_refresh()
+
+
+def set_ticket_lane(content_id: str, lane: str, feedback_reason: str = None):
+    """
+    Move one piece of content between the Tickets lane ('question') and the
+    Conversations lane ('general').
+
+    Deliberately touches lane, feedback_reason and updated_at ONLY. It is not a
+    variant of update_ticket_meta: writing status here is exactly the bug the
+    lane column was added to fix — a coach closing a conversation would overwrite
+    the "this was never a question" verdict and the classifier would lose the
+    lesson. Lane and lifecycle are now independent, and so are their writers.
+
+    A row that does not exist yet is inserted with a NULL status, which
+    grant_tickets reads as "no manual override" and resolves from the lane.
+    """
+    now         = datetime.datetime.utcnow().isoformat()
+    lane_val    = (lane or "").replace("'", "\\'")
+    reason_val  = (feedback_reason or "").replace("'", "\\'")
+    reason_sql  = f"'{reason_val}'" if reason_val else "CAST(NULL AS STRING)"
+    sql = f"""
+        MERGE `{config.META_TABLE}` T
+        USING (
+            SELECT
+                '{content_id}'     AS content_id,
+                '{lane_val}'       AS lane,
+                {reason_sql}       AS feedback_reason,
+                TIMESTAMP '{now}'  AS updated_at
+        ) S
+        ON T.content_id = S.content_id
+        WHEN MATCHED THEN UPDATE SET
+            lane            = S.lane,
+            feedback_reason = COALESCE(S.feedback_reason, T.feedback_reason),
+            updated_at      = S.updated_at
+        WHEN NOT MATCHED THEN INSERT
+            (content_id, lane, feedback_reason, updated_at)
+        VALUES
+            (S.content_id, S.lane, S.feedback_reason, S.updated_at)
+    """
+    client.query(sql).result()
 
 
 def trigger_assignment_refresh():

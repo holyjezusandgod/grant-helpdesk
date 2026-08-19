@@ -34,12 +34,31 @@ def _live_status_cte() -> str:
     ) if "last_member_activity_at" in _gt_cols else ""
 
 
+def _live_lane_expr(gt_cols=None) -> str:
+    """
+    The lane a row is in RIGHT NOW, reading ticket_metadata live rather than
+    waiting for the nightly Dataform rebuild. This is what makes "Not a question"
+    move a row out of Tickets and into Conversations on the very next rerun.
+
+    Same precedence as grant_tickets.sqlx: a coach's override beats the table.
+    The `gt.lane` fallback is guarded because the column only exists once the
+    Dataform change has run — before that every row reads as a question, which
+    is exactly today's behaviour.
+    """
+    gt_cols = _tickets_cols() if gt_cols is None else gt_cols
+    _base   = "gt.lane" if "lane" in gt_cols else f"'{config.LANE_QUESTION}'"
+    return (
+        "CASE WHEN tm.lane IS NOT NULL AND tm.lane != '' THEN tm.lane "
+        f"ELSE {_base} END"
+    )
+
+
 def get_unreviewed_rejects(days: int = 1) -> pd.DataFrame:
     """Posts/articles/comments the classifier rejected and the team hasn't reviewed yet."""
     sql = f"""
         SELECT *
         FROM `{config.TICKETS_TABLE}`
-        WHERE ticket_status = 'not_a_question'
+        WHERE lane = '{config.LANE_GENERAL}'
           AND manual_status IS NULL
           AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {int(days)} DAY)
         QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY created_at DESC) = 1
@@ -67,8 +86,16 @@ def get_tickets(
     urgency=None,
 
     domain=None,
+    lane=config.LANE_QUESTION,
 ) -> pd.DataFrame:
+    """
+    One lane at a time. lane='question' feeds the Tickets tab, lane='general'
+    feeds Conversations; pass lane=None only if you genuinely want both.
+    """
     filters = ["body IS NOT NULL AND TRIM(body) != ''"]
+
+    if lane:
+        filters.append(f"lane = '{lane}'")
 
     if status and status != "All":
         if status == "open":
@@ -78,8 +105,11 @@ def get_tickets(
         else:
             filters.append(f"ticket_status = '{status}'")
     else:
-        # Feedback statuses are hidden from the default view
-        filters.append(f"ticket_status NOT IN ('not_a_question', 'confirmed_question', 'closed')")
+        # Default view = live work. Closed is hidden, and so is archived (the
+        # pre-go-live general backlog). Cancelled stays visible, exactly as it
+        # was before the lane split — the lane predicate above is now what
+        # removes the rejected content, not a status exclusion.
+        filters.append("ticket_status NOT IN ('closed', 'archived')")
     if assignee and assignee != "All":
         filters.append(f"assigned_to = '{assignee}'")
     if member_id:
@@ -109,12 +139,13 @@ def get_tickets(
         # rebuild schema mismatch refreshes _tickets_cols() and tries again.
         _gt_cols = _tickets_cols()
         _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
-        _optional_except = ["difficulty", "team_comment_replied"]
+        _optional_except = ["difficulty", "team_comment_replied", "lane"]
         _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
         _reopen_clause = (
             "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
             "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
         ) if "last_member_activity_at" in _gt_cols else ""
+        _lane_expr = _live_lane_expr(_gt_cols)
         return f"""
             WITH live AS (
                 SELECT
@@ -122,6 +153,7 @@ def get_tickets(
                     COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
                     tm.status                                               AS manual_status,
                     COALESCE(tm.domain, gt.domain)                          AS domain,
+                    {_lane_expr}                                            AS lane,
                     CASE
                         {_reopen_clause}
                         WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
@@ -156,18 +188,20 @@ def get_ticket_detail(content_id: str) -> dict:
     def _build():
         _gt_cols = _tickets_cols()
         _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
-        _optional_except = ["difficulty", "team_comment_replied"]
+        _optional_except = ["difficulty", "team_comment_replied", "lane"]
         _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
         _reopen_clause = (
             "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
             "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
         ) if "last_member_activity_at" in _gt_cols else ""
+        _lane_expr = _live_lane_expr(_gt_cols)
         return f"""
             SELECT
                 gt.* EXCEPT({_except_cols}),
                 COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
                 tm.status                                               AS manual_status,
                 COALESCE(tm.domain, gt.domain)                          AS domain,
+                {_lane_expr}                                            AS lane,
                 CASE
                     {_reopen_clause}
                     WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
@@ -197,12 +231,13 @@ def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
     def _build():
         _gt_cols = _tickets_cols()
         _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
-        _optional_except = ["difficulty", "team_comment_replied"]
+        _optional_except = ["difficulty", "team_comment_replied", "lane"]
         _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
         _reopen_clause = (
             "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
             "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
         ) if "last_member_activity_at" in _gt_cols else ""
+        _lane_expr = _live_lane_expr(_gt_cols)
         return f"""
             WITH live AS (
                 SELECT
@@ -210,6 +245,7 @@ def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
                     COALESCE(tm.assigned_to, gt.assigned_to)               AS assigned_to,
                     tm.status                                               AS manual_status,
                     COALESCE(tm.domain, gt.domain)                         AS domain,
+                    {_lane_expr}                                           AS lane,
                     CASE
                         {_reopen_clause}
                         WHEN tm.status IS NOT NULL AND tm.status != ''     THEN tm.status
@@ -440,10 +476,12 @@ def preview_bulk_close(
 def get_open_stats() -> dict:
     def _build():
         _reopen_clause = _live_status_cte()
+        _lane_expr     = _live_lane_expr()
         return f"""
             WITH live AS (
                 SELECT
                     gt.created_at,
+                    {_lane_expr} AS lane,
                     CASE
                         {_reopen_clause}
                         WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
@@ -469,6 +507,9 @@ def get_open_stats() -> dict:
                 COUNTIF(ticket_status NOT IN {_TERMINAL_IN}
                     AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) >= 48)                        AS critical
             FROM live
+            -- The KPI cards are about grant questions. Conversations have their
+            -- own tab and deliberately do not count towards these four numbers.
+            WHERE lane = '{config.LANE_QUESTION}'
         """
     row = _query_with_schema_retry(_build).iloc[0]
     return row.to_dict()
@@ -477,12 +518,14 @@ def get_open_stats() -> dict:
 def get_daily_stats() -> dict:
     def _build():
         _reopen_clause = _live_status_cte()
+        _lane_expr     = _live_lane_expr()
         return f"""
             WITH live AS (
                 SELECT
                     gt.created_at,
                     gt.first_engagement_at,
                     COALESCE(tm.updated_at, gt.ticket_updated_at) AS ticket_updated_at,
+                    {_lane_expr} AS lane,
                     CASE
                         {_reopen_clause}
                         WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
@@ -506,6 +549,8 @@ def get_daily_stats() -> dict:
                     ) / 30.0, 1
                 )                                                                                       AS daily_avg
             FROM live
+            -- Question lane only, so these three match the four cards above.
+            WHERE lane = '{config.LANE_QUESTION}'
         """
     row = _query_with_schema_retry(_build).iloc[0]
     result = row.to_dict()
@@ -616,9 +661,11 @@ def get_member_history(member_id: int, exclude_content_id: str = None) -> pd.Dat
             CASE
                 WHEN gt.team_commented OR gt.team_reacted {_team_replied_sql} THEN 'answered'
                 WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
-                WHEN gt.ticket_status = 'not_a_question'            THEN 'not_a_question'
                 ELSE 'open'
-            END AS ticket_status
+            END AS ticket_status,
+            -- shown beside the status so a coach can see at a glance that a past
+            -- item was a conversation, not a question they failed to answer
+            {_live_lane_expr(_gt_cols)}                             AS lane
         FROM `{config.TICKETS_TABLE}` gt
         LEFT JOIN (
             SELECT * FROM `{config.META_TABLE}`
