@@ -4,8 +4,17 @@ config {
   uniqueKey: ["content_id"],
   bigquery: { partitionBy: "DATE(created_at)" },
   tags: ["helpdesk"],
-  description: "Active comments by regular members on Lesko grant posts. Team authors excluded. HTML stripped."
+  description: "Active comments on Lesko grant posts, team included. HTML stripped. Team/avatar exclusion and thread-root ranking both happen downstream in stg_grant_candidates."
 }
+
+-- Append-only: row-local work only. See the note in stg_grant_posts.sqlx.
+--
+-- member_thread_rank USED TO BE COMPUTED HERE and was wrong for exactly that reason:
+-- a window function inside an incremental model only sees the rows in the current
+-- batch, so a member's second comment on a post arrived in a later run, found an
+-- empty partition, and was ranked 1 again — opening a duplicate ticket instead of
+-- joining the existing thread. It now lives in stg_grant_candidates, where the
+-- window spans the whole table on every run.
 
 SELECT
   CONCAT('comment_', CAST(comment_id AS STRING))       AS content_id,
@@ -23,26 +32,17 @@ SELECT
   updated_at,
   created_at                                         AS last_activity_at,
 
-  -- thread detection fields
+  -- thread detection fields (row-local, so they stay)
   depth,
   reply_to_id,
 
-  -- rank 1 = first comment this member ever made on this post → thread root (ticket candidate)
-  -- rank > 1 = thread continuation (member already has a thread on this post)
-  ROW_NUMBER() OVER (
-    PARTITION BY author_id, targetable_id
-    ORDER BY created_at
-  )                                                  AS member_thread_rank
+  -- Ingestion timestamp: the incremental watermark keys on this, not on created_at.
+  received_at
 
 FROM ${ref("core_comments")}
 
 WHERE client_id        = 'lesko_4022250'
   AND comment_status   = 'active'
   AND targetable_type  = 'Post'
-  AND author_id NOT IN (
-    SELECT member_id FROM ${ref("stg_grant_team_members")}
-  )
-  AND author_id NOT IN (
-    SELECT member_id FROM ${ref("info_avatars")} WHERE client_id = 'lesko_4022250'
-  )
-  ${ when(incremental(), `AND created_at > (SELECT MAX(created_at) FROM ${self()})`) }
+  ${ when(incremental(), `AND received_at > TIMESTAMP_SUB(
+       (SELECT MAX(received_at) FROM ${self()}), INTERVAL 1 HOUR)`) }

@@ -1,23 +1,65 @@
 config {
   type: "view",
   name: "stg_grant_candidates",
-  description: "All member content (posts + articles + comments) before LLM classification. This is the input pool for grant_question_classifier."
+  description: "All member content (posts + articles + comments) before LLM classification. This is the input pool for grant_question_classifier. Excludes team and avatar authors, and keeps only thread-root comments."
 }
 
+-- THIS VIEW IS WHERE STATE-DEPENDENT LOGIC BELONGS.
+--
+-- The three staging models it reads are incremental and append-only: a row is
+-- written once and never revisited. So any rule that can CHANGE THE ANSWER FOR A
+-- ROW ALREADY WRITTEN has to be applied here instead, because a view re-evaluates
+-- everything on every run. Two such rules live here:
+--
+--   1. Team/avatar exclusion. Membership of stg_grant_team_members is current
+--      state — it follows the member's Mighty Networks role today. When a
+--      moderator steps down, their whole back catalogue must be re-judged. Frozen
+--      into staging, that never happened: one departed moderator's 1,645 posts and
+--      comments stayed invisible to the desk for months.
+--   2. Thread-root ranking. A window function needs to see every comment a member
+--      made on a post. Inside an incremental model it only sees the current batch,
+--      which crowned 349 follow-up comments as thread roots and duplicated tickets.
+
+WITH excluded AS (
+  SELECT member_id FROM ${ref("stg_grant_team_members")}
+  UNION DISTINCT
+  SELECT member_id FROM ${ref("info_avatars")} WHERE client_id = 'lesko_4022250'
+),
+
+-- NOT IN (subquery) yields NULL — and therefore drops every row — if the subquery
+-- contains a single NULL. Same cheap insurance stg_grant_team_members takes.
+excluded_safe AS (
+  SELECT member_id FROM excluded WHERE member_id IS NOT NULL
+),
+
 -- Posts and articles are always thread roots.
--- Comments: only rank=1 (first comment from this member on this post) are thread roots.
--- Rank>1 depth-1 comments and all depth-2 replies are thread continuations — not new tickets.
+-- Comments: only rank=1 (first comment from this member on this post) are thread
+-- roots. Rank>1 depth-1 comments and all depth-2 replies are thread continuations
+-- — not new tickets. Partitioning by member_id means one member's rank never
+-- depends on anyone else's comments, so excluding team authors first cannot shift it.
+ranked_comments AS (
+  SELECT
+    *,
+    ROW_NUMBER() OVER (
+      PARTITION BY member_id, thread_id
+      ORDER BY created_at
+    ) AS member_thread_rank
+  FROM ${ref("stg_grant_member_comments")}
+  WHERE member_id NOT IN (SELECT member_id FROM excluded_safe)
+)
 
 SELECT content_id, thread_id, content_type, member_id, space_id, title, body, permalink, created_at, updated_at, last_activity_at
 FROM ${ref("stg_grant_posts")}
+WHERE member_id NOT IN (SELECT member_id FROM excluded_safe)
 
 UNION ALL
 
 SELECT content_id, thread_id, content_type, member_id, space_id, title, body, permalink, created_at, updated_at, last_activity_at
 FROM ${ref("stg_grant_articles")}
+WHERE member_id NOT IN (SELECT member_id FROM excluded_safe)
 
 UNION ALL
 
 SELECT content_id, thread_id, content_type, member_id, space_id, title, body, permalink, created_at, updated_at, last_activity_at
-FROM ${ref("stg_grant_member_comments")}
+FROM ranked_comments
 WHERE member_thread_rank = 1

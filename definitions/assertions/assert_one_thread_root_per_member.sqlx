@@ -1,0 +1,12 @@
+config {
+  type: "assertion",
+  name: "assert_one_thread_root_per_member",
+  tags: ["helpdesk"],
+  description: "Fails if a member has more than one thread-root comment on the same post. Each such pair is a duplicate ticket for one conversation. This held 349 rows while member_thread_rank was computed inside an incremental model and could only see the current batch."
+}
+
+SELECT member_id, thread_id, COUNT(*) AS thread_roots
+FROM ${ref("stg_grant_candidates")}
+WHERE content_type = 'comment'
+GROUP BY member_id, thread_id
+HAVING COUNT(*) > 1

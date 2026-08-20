@@ -1,0 +1,47 @@
+config {
+  type: "assertion",
+  name: "assert_staging_complete",
+  tags: ["helpdesk"],
+  description: "Fails if any active Lesko row in core_* is missing from its staging table. This is the check that was absent while the pipeline quietly dropped 1,926 rows for six months: a pipeline that discards a quarter of its input and reports nothing is the real defect, the watermark predicate was only how it happened."
+}
+
+js {
+  // Rows that arrived in the last two hours are legitimately not staged yet: the
+  // Mighty Networks sync and the 30-minute Dataform run are not synchronised.
+  // Two hours clears the widest observed gap without hiding a real regression.
+  const ARRIVAL_GRACE_HOURS = 2;
+}
+
+-- Staging now mirrors core_* one-for-one — team and avatar exclusion moved to
+-- stg_grant_candidates — so this is a plain set difference in both directions of
+-- meaning: every eligible source row must have a staged twin.
+
+WITH source_rows AS (
+  SELECT CONCAT('post_', CAST(post_id AS STRING)) AS content_id, 'post' AS content_type, created_at, received_at
+  FROM ${ref("core_posts")}
+  WHERE client_id = 'lesko_4022250' AND post_status = 'active'
+
+  UNION ALL
+
+  SELECT CONCAT('article_', CAST(article_id AS STRING)), 'article', created_at, received_at
+  FROM ${ref("core_articles")}
+  WHERE client_id = 'lesko_4022250' AND article_status = 'active'
+
+  UNION ALL
+
+  SELECT CONCAT('comment_', CAST(comment_id AS STRING)), 'comment', created_at, received_at
+  FROM ${ref("core_comments")}
+  WHERE client_id = 'lesko_4022250' AND comment_status = 'active' AND targetable_type = 'Post'
+),
+
+staged_rows AS (
+  SELECT content_id FROM ${ref("stg_grant_posts")}
+  UNION ALL SELECT content_id FROM ${ref("stg_grant_articles")}
+  UNION ALL SELECT content_id FROM ${ref("stg_grant_member_comments")}
+)
+
+SELECT s.content_id, s.content_type, s.created_at, s.received_at
+FROM source_rows s
+LEFT JOIN staged_rows t USING (content_id)
+WHERE t.content_id IS NULL
+  AND s.received_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${ARRIVAL_GRACE_HOURS} HOUR)

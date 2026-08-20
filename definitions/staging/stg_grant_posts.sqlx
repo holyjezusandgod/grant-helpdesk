@@ -4,8 +4,14 @@ config {
   uniqueKey: ["content_id"],
   bigquery: { partitionBy: "DATE(created_at)" },
   tags: ["helpdesk"],
-  description: "Active posts from the Lesko grant community. HTML stripped from body. Prefixed content_id to avoid collision with articles."
+  description: "Active posts from the Lesko grant community, team included. HTML stripped from body. Prefixed content_id to avoid collision with articles. Team/avatar exclusion happens downstream in stg_grant_candidates."
 }
+
+-- This model is APPEND-ONLY, so it may only do row-local work: strip HTML, prefix
+-- the id, carry timestamps. Anything that depends on OTHER rows (a window function)
+-- or on CURRENT STATE (who is team today) must live in stg_grant_candidates, which
+-- is a view and is therefore re-evaluated on every run. A filter frozen into this
+-- table can never be revisited: rows are written once and never looked at again.
 
 SELECT
   CONCAT('post_', CAST(post_id AS STRING))  AS content_id,
@@ -21,16 +27,19 @@ SELECT
   permalink,
   created_at,
   updated_at,
-  last_activity_at
+  last_activity_at,
+
+  -- The incremental watermark. This is an INGESTION timestamp, not a business one:
+  -- created_at says when a member wrote the post, received_at says when we learned
+  -- about it. Watermarking on created_at loses every row that arrives late or
+  -- back-dated, permanently and silently.
+  received_at
 
 FROM ${ref("core_posts")}
 
 WHERE client_id   = 'lesko_4022250'
   AND post_status = 'active'
-  AND creator_id NOT IN (
-    SELECT member_id FROM ${ref("stg_grant_team_members")}
-  )
-  AND creator_id NOT IN (
-    SELECT member_id FROM ${ref("info_avatars")} WHERE client_id = 'lesko_4022250'
-  )
-  ${ when(incremental(), `AND created_at > (SELECT MAX(created_at) FROM ${self()})`) }
+  -- One hour of overlap absorbs rows that commit slightly out of order within a
+  -- sync batch. Re-reading a row is free: uniqueKey makes Dataform emit a MERGE.
+  ${ when(incremental(), `AND received_at > TIMESTAMP_SUB(
+       (SELECT MAX(received_at) FROM ${self()}), INTERVAL 1 HOUR)`) }

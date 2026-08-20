@@ -4,8 +4,10 @@ config {
   uniqueKey: ["content_id"],
   bigquery: { partitionBy: "DATE(created_at)" },
   tags: ["helpdesk"],
-  description: "Active articles from the Lesko grant community. HTML stripped from body. Prefixed content_id to avoid collision with posts."
+  description: "Active articles from the Lesko grant community, team included. HTML stripped from body. Prefixed content_id to avoid collision with posts. Team/avatar exclusion happens downstream in stg_grant_candidates."
 }
+
+-- Append-only: row-local work only. See the note in stg_grant_posts.sqlx.
 
 SELECT
   CONCAT('article_', CAST(article_id AS STRING))  AS content_id,
@@ -21,16 +23,14 @@ SELECT
   permalink,
   created_at,
   updated_at,
-  last_activity_at
+  last_activity_at,
+
+  -- Ingestion timestamp: the incremental watermark keys on this, not on created_at.
+  received_at
 
 FROM ${ref("core_articles")}
 
 WHERE client_id      = 'lesko_4022250'
   AND article_status = 'active'
-  AND creator_id NOT IN (
-    SELECT member_id FROM ${ref("stg_grant_team_members")}
-  )
-  AND creator_id NOT IN (
-    SELECT member_id FROM ${ref("info_avatars")} WHERE client_id = 'lesko_4022250'
-  )
-  ${ when(incremental(), `AND created_at > (SELECT MAX(created_at) FROM ${self()})`) }
+  ${ when(incremental(), `AND received_at > TIMESTAMP_SUB(
+       (SELECT MAX(received_at) FROM ${self()}), INTERVAL 1 HOUR)`) }

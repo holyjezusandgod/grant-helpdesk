@@ -7,8 +7,8 @@ config {
 
 -- Membership of this view has three separate effects downstream, which is why
 -- it is worth changing carefully:
---   1. team content never becomes a ticket (stg_grant_posts / _articles /
---      _member_comments, stg_grant_members)
+--   1. team content never becomes a ticket (stg_grant_candidates, which is a
+--      view and so re-judges every row on every run; stg_grant_members)
 --   2. team comments and reactions ARE engagement on member content
 --      (stg_team_engagement -> team_commented / team_reacted)
 --   3. a team reply does not count as member activity, so it cannot auto-reopen
