@@ -78,9 +78,11 @@ MN_API_BASE    = "https://api.mn.co/admin/v1"
 # person's real name. member_id is their Mighty Networks member id.
 TAG_COLLEAGUES = [
     {"name": "Roger White",       "member_id": 20608038},
-    {"name": "Amber Littlefield", "member_id": 18218501},
     {"name": "Amber Hawkins",     "member_id": 10443685},
     {"name": "Megan P",           "member_id": 11554451},
+    {"name": "Tony Woodworth",    "member_id": 22079425},
+    {"name": "Misty Fowlds",      "member_id": 13511276},
+    {"name": "Rose Scarlet",      "member_id": 6460542},
 ]
 
 DOMAINS = [
